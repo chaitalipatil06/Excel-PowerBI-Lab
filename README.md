@@ -2,7 +2,7 @@
 
 A hands-on, ADHD-friendly course that teaches **Excel** (8 lessons) and **Power BI** (7 lessons) from beginner to job-ready. Learners practise in a working spreadsheet and a Power BI simulator right in the browser, then repeat each skill in real Excel and Power BI Desktop with the included practice files.
 
-**Live site:** https://chaitalipatil06.github.io/REPO-NAME/ (replace REPO-NAME with your repository's name)
+**Live site:** https://chaitalipatil06.github.io/Excel-PowerBI-Lab/ (replace REPO-NAME with your repository's name)
 
 ## What's inside
 
