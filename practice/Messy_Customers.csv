@@ -1,0 +1,11 @@
+Customer,Location,Amount,Date
+  ana LOPEZ ,"Seattle, West",$45.50,2025-01-03
+Ben carter,"Chicago, Midwest",$12.00,2025-01-05
+,,,
+cy  NGUYEN,"Boston, East",$78.25,2025-01-09
+Ben carter,"Chicago, Midwest",$12.00,2025-01-05
+dee PATEL  ,"San Diego, West",$33.00,2025-01-12
+eli brooks,"New York, East",$61.75,2025-01-15
+,,,
+FAY kim,"Austin, South",$19.50,2025-01-18
+gus  OLSEN,"Seattle, West",$54.00,2025-01-21
