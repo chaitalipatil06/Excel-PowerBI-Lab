@@ -49,15 +49,19 @@ const XL = (() => {
         if(peek() && peek().k === '('){ next(); const args = []; if(peek() && peek().k === ')'){ next(); return {t:'fn', n:x.v, args}; }
           while(true){ if(peek() && (peek().k === ',' || peek().k === ')')) args.push({t:'blank'}); else args.push(cmp()); const s = next(); if(!s) throw new XErr(ERR.VAL); if(s.k === ')') break; if(s.k !== ',') throw new XErr(ERR.VAL); }
           return {t:'fn', n:x.v, args}; }
-        throw new XErr(ERR.NAME);
+        return {t:'name', v:x.v};
       }
       throw new XErr(ERR.VAL);
     }
     const e = cmp(); if(p < t.length) throw new XErr(ERR.VAL); return e;
   }
 
+  // ---- dates: ISO text <-> Excel serial ----
+  const ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
+  const isoToSerial = s => { const m = ISO.exec(s); return Math.round((Date.UTC(+m[1], +m[2]-1, +m[3]) - Date.UTC(1899,11,30)) / 864e5); };
+  const serialToIso = n => new Date(Date.UTC(1899,11,30) + Math.round(n)*864e5).toISOString().slice(0,10);
   // ---- values ----
-  const num = v => { if(v === '' || v === null || v === undefined) return 0; if(typeof v === 'boolean') return v ? 1 : 0; if(typeof v === 'number') return v; if(isErr(v)) throw new XErr(v); const n = Number(v); if(isNaN(n)) throw new XErr(ERR.VAL); return n; };
+  const num = v => { if(v === '' || v === null || v === undefined) return 0; if(typeof v === 'boolean') return v ? 1 : 0; if(typeof v === 'number') return v; if(isErr(v)) throw new XErr(v); if(ISO.test(v)) return isoToSerial(v); const n = Number(v); if(isNaN(n)) throw new XErr(ERR.VAL); return n; };
   const str = v => { if(v === null || v === undefined) return ''; if(typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'; if(isErr(v)) throw new XErr(v); if(typeof v === 'number') return String(+v.toFixed(10)); return String(v); };
   const bool = v => { if(typeof v === 'boolean') return v; if(typeof v === 'number') return v !== 0; if(v === '' || v == null) return false; const u = String(v).toUpperCase(); if(u === 'TRUE') return true; if(u === 'FALSE') return false; throw new XErr(ERR.VAL); };
   const flat = a => a.flat(Infinity);
@@ -75,6 +79,19 @@ const XL = (() => {
   }
   const ymd = v => { if(typeof v === 'number'){ const d = new Date(Date.UTC(1899,11,30) + v*864e5); return [d.getUTCFullYear(), d.getUTCMonth()+1, d.getUTCDate()]; } const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(str(v)); if(!m) throw new XErr(ERR.VAL); return [+m[1], +m[2], +m[3]]; };
 
+  const MON = ['January','February','March','April','May','June','July','August','September','October','November','December'], DOW = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function textFmt(v, f){
+    const fl = f.toLowerCase();
+    if(/[ymd]/.test(fl) && !/[#0]/.test(fl)){ const n = num(v), [y, m, d] = ymd(n), wd = new Date(Date.UTC(y, m-1, d)).getUTCDay();
+      return f.replace(/yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d/gi, t => { t = t.toLowerCase(); return {yyyy:String(y), yy:String(y).slice(2), mmmm:MON[m-1], mmm:MON[m-1].slice(0,3), mm:String(m).padStart(2,'0'), m:String(m), dddd:DOW[wd], ddd:DOW[wd].slice(0,3), dd:String(d).padStart(2,'0'), d:String(d)}[t]; }); }
+    let n = num(v); const pct = f.includes('%'); if(pct) n *= 100;
+    const dec = (/\.(0+)/.exec(f) || [,''])[1].length; const comma = f.includes(',');
+    let out = Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:dec, maximumFractionDigits:dec, useGrouping:comma});
+    const pre = (/^[^#0]*/.exec(f) || [''])[0].replace(/"/g, ''), post = (/[^#0.,%]*$/.exec(f) || [''])[0].replace(/"/g, '');
+    return (n < 0 ? '-' : '') + pre + out + (pct ? '%' : '') + post;
+  }
+  const workdays = (a, b) => { let c = 0; const s0 = Math.min(a, b), s1 = Math.max(a, b); for(let s = s0; s <= s1; s++){ const wd = (s + 6) % 7; if(wd !== 0 && wd !== 6) c++; } return a <= b ? c : -c; };
+  const as2D = v => isRange(v) ? v : [[v]];
   const FN = {
     SUM: a => nums(a).reduce((s, v) => s + v, 0),
     AVERAGE: a => { const n = nums(a); if(!n.length) throw new XErr(ERR.DIV); return n.reduce((s,v)=>s+v,0)/n.length; },
@@ -110,24 +127,58 @@ const XL = (() => {
     CONCAT: a => flat(a).map(str).join(''), CONCATENATE: a => flat(a).map(str).join(''),
     TEXTJOIN: a => flat(a.slice(2)).filter(v => !(bool(a[1]) && (v === '' || v == null))).map(str).join(str(a[0])),
     YEAR: a => ymd(a[0])[0], MONTH: a => ymd(a[0])[1], DAY: a => ymd(a[0])[2],
-    UNIQUE: a => [...new Set(flat(a[0]))].length, // simplified: returns the count (spills not supported)
+    UNIQUE: a => { const rows = as2D(a[0]); const seen = new Set(), out = []; for(const r of rows){ const k = JSON.stringify(r); if(!seen.has(k)){ seen.add(k); out.push(r); } } return out; },
+    FILTER: a => { const rows = as2D(a[0]), inc = flat(as2D(a[1])); if(inc.length !== rows.length) throw new XErr(ERR.VAL); const out = rows.filter((_, i) => bool(inc[i])); if(!out.length){ if(a[2] !== undefined) return a[2]; throw new XErr('#CALC!'); } return out; },
+    SORT: a => { const rows = as2D(a[0]).map(r => r.slice()); const c = (a[1] === undefined ? 1 : num(a[1])) - 1, o = a[2] === undefined ? 1 : num(a[2]);
+      return rows.sort((x, y) => { const p = x[c], q = y[c]; const r = (typeof p === 'number' && typeof q === 'number') ? p - q : String(p).localeCompare(String(q)); return r * o; }); },
+    SORTBY: a => { const rows = as2D(a[0]), by = flat(as2D(a[1])), o = a[2] === undefined ? 1 : num(a[2]); return rows.map((r, i) => [r, by[i]]).sort((x, y) => ((typeof x[1] === 'number' ? x[1] - y[1] : String(x[1]).localeCompare(String(y[1])))) * o).map(x => x[0]); },
+    SEQUENCE: a => { const n = num(a[0]), c = a[1] === undefined ? 1 : num(a[1]), st = a[2] === undefined ? 1 : num(a[2]), step = a[3] === undefined ? 1 : num(a[3]); const out = []; let v = st; for(let i=0;i<n;i++){ const r = []; for(let j=0;j<c;j++){ r.push(v); v += step; } out.push(r); } return out; },
+    SUMPRODUCT: a => { const arrs = a.map(x => flat(as2D(x))); return arrs[0].reduce((s, _, i) => s + arrs.reduce((p, arr) => p * (typeof arr[i] === 'number' ? arr[i] : typeof arr[i] === 'boolean' ? +arr[i] : 0), 1), 0); },
+    MAXIFS: a => { const v = flat(a[0]).filter((x, i) => { for(let k=1;k<a.length;k+=2) if(!matchCrit(flat(a[k])[i], a[k+1])) return false; return typeof x === 'number'; }); return v.length ? Math.max(...v) : 0; },
+    MINIFS: a => { const v = flat(a[0]).filter((x, i) => { for(let k=1;k<a.length;k+=2) if(!matchCrit(flat(a[k])[i], a[k+1])) return false; return typeof x === 'number'; }); return v.length ? Math.min(...v) : 0; },
+    AVERAGEIFS: a => { const v = flat(a[0]).filter((x, i) => { for(let k=1;k<a.length;k+=2) if(!matchCrit(flat(a[k])[i], a[k+1])) return false; return typeof x === 'number'; }); if(!v.length) throw new XErr(ERR.DIV); return v.reduce((s,x)=>s+x,0)/v.length; },
+    DATE: a => { const d = new Date(Date.UTC(num(a[0]), num(a[1]) - 1, num(a[2]))); return d.toISOString().slice(0,10); },
+    EOMONTH: a => { const [y, m] = ymd(num(a[0])); const d = new Date(Date.UTC(y, m - 1 + num(a[1]) + 1, 0)); return d.toISOString().slice(0,10); },
+    EDATE: a => { const [y, m, dd] = ymd(num(a[0])); const last = new Date(Date.UTC(y, m - 1 + num(a[1]) + 1, 0)).getUTCDate(); return new Date(Date.UTC(y, m - 1 + num(a[1]), Math.min(dd, last))).toISOString().slice(0,10); },
+    DAYS: a => num(a[0]) - num(a[1]),
+    DATEDIF: a => { const s0 = num(a[0]), s1 = num(a[1]); if(s1 < s0) throw new XErr('#NUM!'); const u = str(a[2]).toUpperCase(); const [y0, m0, d0] = ymd(s0), [y1, m1, d1] = ymd(s1);
+      if(u === 'D') return s1 - s0; let months = (y1 - y0) * 12 + (m1 - m0) - (d1 < d0 ? 1 : 0); if(u === 'M') return months; if(u === 'Y') return Math.floor(months / 12); if(u === 'YM') return months % 12; throw new XErr(ERR.VAL); },
+    NETWORKDAYS: a => workdays(num(a[0]), num(a[1])),
+    WORKDAY: a => { let s0 = num(a[0]), n = num(a[1]); const step = n >= 0 ? 1 : -1; while(n !== 0){ s0 += step; const wd = (s0 + 6) % 7; if(wd !== 0 && wd !== 6) n -= step; } return serialToIso(s0); },
+    WEEKDAY: a => { const wd = (num(a[0]) + 6) % 7; const t = a[1] === undefined ? 1 : num(a[1]); return t === 2 ? (wd === 0 ? 7 : wd) : wd + 1; },
+    TODAY: () => new Date().toISOString().slice(0,10),
+    TEXT: a => textFmt(a[0], str(a[1])),
+    VALUE: a => num(a[0]),
   };
-  const LAZY = new Set(['IF','IFERROR','IFS','AND','OR']);
+  const LAZY = new Set(['IF','IFERROR','IFS','AND','OR','LET']);
 
   // ---- sheet ----
   class Sheet {
-    constructor(cells = {}, opts = {}){ this.raw = {}; this.cols = opts.cols || 8; this.rows = opts.rows || 12; for(const k in cells) this.raw[k.toUpperCase()] = cells[k]; this.recalc(); }
+    constructor(cells = {}, opts = {}){ this.raw = {}; this.cols = opts.cols || 8; this.rows = opts.rows || 12; this.names = opts.names || {}; this.env = null; for(const k in cells) this.raw[k.toUpperCase()] = cells[k]; this.recalc(); }
     get(a){ return this.raw[a] ?? ''; }
     set(a, v){ a = a.toUpperCase(); if(v === '' || v === null) delete this.raw[a]; else this.raw[a] = v; this.recalc(); }
-    recalc(){ this.vals = {}; this.stack = new Set(); for(const a in this.raw) this.value(a); }
+    recalc(){
+      this.spillVals = {}; this.spillOf = {};
+      for(let pass = 0; pass < 2; pass++){
+        this.vals = {}; this.stack = new Set(); this.spills = {};
+        for(const a in this.raw) this.value(a);
+        const sv = {}, so = {};
+        for(const a in this.spills){ const arr = this.spills[a], p = parseRef(a); let blocked = false;
+          arr.forEach((row, i) => row.forEach((v, j) => { if(i || j){ const t = addr(p.c + j, p.r + i); if(this.raw[t] !== undefined && this.raw[t] !== '') blocked = true; } }));
+          if(blocked){ this.vals[a] = '#SPILL!'; continue; }
+          arr.forEach((row, i) => row.forEach((v, j) => { const t = addr(p.c + j, p.r + i); if(i || j){ sv[t] = v; } so[t] = a; })); }
+        const same = JSON.stringify(sv) === JSON.stringify(this.spillVals); this.spillVals = sv; this.spillOf = so; if(same && pass) break;
+      }
+      for(const a in this.spillVals) this.vals[a] = this.spillVals[a];
+    }
     value(a){
       if(a in this.vals) return this.vals[a];
       const raw = this.raw[a];
-      if(raw === undefined) return '';
+      if(raw === undefined) return this.spillVals && a in this.spillVals ? this.spillVals[a] : '';
       if(typeof raw === 'string' && raw.startsWith('=')){
         if(this.stack.has(a)) return ERR.CIRC;
         this.stack.add(a); let v;
-        try{ v = this.evalNode(parse(raw.slice(1))); if(isRange(v)) v = v[0][0]; if(v === undefined || v === null) v = 0; if(v === '') v = 0; if(typeof v === 'number' && !isFinite(v)) v = ERR.DIV; }
+        try{ v = this.evalNode(parse(raw.slice(1))); if(isRange(v)){ if(v.length > 1 || v[0].length > 1) this.spills[a] = v; v = v[0][0]; } if(v === undefined || v === null) v = 0; if(v === '') v = 0; if(typeof v === 'number' && !isFinite(v)) v = ERR.DIV; }
         catch(e){ v = e instanceof XErr ? e.code : ERR.VAL; }
         this.stack.delete(a); this.vals[a] = v; return v;
       }
@@ -139,34 +190,44 @@ const XL = (() => {
       switch(n.t){
         case 'num': case 'str': case 'bool': return n.v;
         case 'blank': return undefined;
+        case 'name': { if(this.env && n.v in this.env) return this.env[n.v]; const nm = Object.keys(this.names).find(k => k.toUpperCase() === n.v); if(nm){ const t = this.names[nm]; return t.includes(':') ? this.range(t.replace(/\$/g,'')) : this.scalar({t:'ref', v:t.replace(/\$/g,'')}); } throw new XErr(ERR.NAME); }
         case 'ref': { const p = parseRef(n.v); const v = this.value(addr(p.c, p.r)); if(isErr(v)) throw new XErr(v); return v; }
         case 'range': return this.range(n.v);
         case 'neg': return -num(this.scalar(n.e));
         case 'bin': {
-          const l = this.scalar(n.l), r = this.scalar(n.r);
-          switch(n.o){
+          const L = this.evalNode(n.l), Rv = this.evalNode(n.r);
+          if(isRange(L) || isRange(Rv)){ const A2 = as2D(L), B2 = as2D(Rv); const rows = Math.max(A2.length, B2.length), cols = Math.max(A2[0].length, B2[0].length);
+            const pick = (M, i, j) => M[M.length === 1 ? 0 : i][M[0].length === 1 ? 0 : j];
+            return Array.from({length:rows}, (_, i) => Array.from({length:cols}, (_, j) => { try{ return this.binop(n.o, pick(A2, i, j), pick(B2, i, j)); }catch(e){ return e instanceof XErr ? e.code : ERR.VAL; } })); }
+          return this.binop(n.o, L, Rv);
+        }
+        case 'fn': return this.call(n);
+      }
+      throw new XErr(ERR.VAL);
+    }
+    binop(o, l, r){
+          if(isErr(l)) throw new XErr(l); if(isErr(r)) throw new XErr(r);
+          switch(o){
             case '+': return num(l) + num(r); case '-': return num(l) - num(r); case '*': return num(l) * num(r);
             case '/': { const d = num(r); if(d === 0) throw new XErr(ERR.DIV); return num(l) / d; }
             case '^': return Math.pow(num(l), num(r)); case '&': return str(l) + str(r);
             default: { const cmpv = (typeof l === 'number' && typeof r === 'number') ? l - r : (str(l).toLowerCase() < str(r).toLowerCase() ? -1 : str(l).toLowerCase() > str(r).toLowerCase() ? 1 : 0);
-              return {'=':cmpv===0,'<>':cmpv!==0,'<':cmpv<0,'>':cmpv>0,'<=':cmpv<=0,'>=':cmpv>=0}[n.o]; }
+              return {'=':cmpv===0,'<>':cmpv!==0,'<':cmpv<0,'>':cmpv>0,'<=':cmpv<=0,'>=':cmpv>=0}[o]; }
           }
-        }
-        case 'fn': {
+    }
+    call(n){
           if(LAZY.has(n.n)){
             const A = n.args;
             if(n.n === 'IF'){ const c = bool(this.scalar(A[0])); const b = c ? A[1] : A[2]; if(!b || b.t === 'blank') return c ? 0 : false; return this.scalar(b); }
             if(n.n === 'IFERROR'){ try{ const v = this.scalar(A[0]); if(isErr(v)) throw new XErr(v); return v; }catch(e){ if(e instanceof XErr) return this.scalar(A[1]); throw e; } }
             if(n.n === 'IFS'){ for(let i=0;i<A.length;i+=2){ if(bool(this.scalar(A[i]))) return this.scalar(A[i+1]); } throw new XErr(ERR.NA); }
+            if(n.n === 'LET'){ const saved = this.env; this.env = Object.assign({}, this.env); try{ for(let i=0;i<A.length-1;i+=2){ if(A[i].t !== 'name') throw new XErr(ERR.VAL); this.env[A[i].v] = this.evalNode(A[i+1]); } return this.evalNode(A[A.length-1]); } finally { this.env = saved; } }
             if(n.n === 'AND') return A.every(x => flat([this.evalNode(x)]).every(bool));
             if(n.n === 'OR') return A.some(x => flat([this.evalNode(x)]).some(bool));
           }
           const f = FN[n.n]; if(!f) throw new XErr(ERR.NAME);
           const args = n.args.map(x => x.t === 'blank' ? undefined : this.evalNode(x));
           return f(args);
-        }
-      }
-      throw new XErr(ERR.VAL);
     }
     scalar(n){ const v = this.evalNode(n); if(isRange(v)){ if(v.length === 1 && v[0].length === 1) return v[0][0]; throw new XErr(ERR.VAL); } return v; }
     formulaOf(a){ const r = this.raw[a.toUpperCase()]; return typeof r === 'string' && r.startsWith('=') ? r : ''; }

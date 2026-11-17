@@ -30,9 +30,10 @@ TOTALS.orders = M.T.Sales.rows.length;
 TOTALS.qty = M.T.Sales.rows.reduce((s, r) => s + r.Qty, 0);
 TOTALS.west = PBI.visible(M, 'Sales', [{table:'Stores', col:'Region', pred:v => v === 'West'}]).reduce((s, r) => s + r.Revenue, 0);
 const STD_MEASURES = ['Total Revenue = SUM(Sales[Revenue])','Total Orders = COUNTROWS(Sales)','Avg Order Value = DIVIDE([Total Revenue], [Total Orders])','Units Sold = SUM(Sales[Qty])'];
-STD_MEASURES.forEach(t => { const m = PBI.defineMeasure(M, t); M.measures[m.name] = m; });
+STD_MEASURES.concat(typeof EXTRA_MEASURES !== 'undefined' ? EXTRA_MEASURES : []).forEach(t => { const m = PBI.defineMeasure(M, t); M.measures[m.name] = m; });
 const FLAT = M.T.Sales.rows.map(r => { const p = M.rels[0].idx.get(r.ProductID), s = M.rels[1].idx.get(r.StoreID), c = M.rels[2].idx.get(r.Date);
-  return { OrderID:r.OrderID, Date:r.Date, Month:c.Month, Quarter:c.Quarter, Store:s.Store, Region:s.Region, Product:p.Product, Category:p.Category, Qty:r.Qty, Revenue:r.Revenue }; });
+  return { OrderID:r.OrderID, Date:r.Date, Year:c.Year, Month:c.Month, Quarter:c.Quarter, Store:s.Store, Region:s.Region, Product:p.Product, Category:p.Category, Qty:r.Qty, Revenue:r.Revenue }; });
+const FLATX = FLAT.filter(r => r.Year === 2025); // Excel pivots/charts use one year (2025)
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const sortKeys = (keys, field) => field === 'Month' ? keys.sort((a,b) => MONTHS.indexOf(a) - MONTHS.indexOf(b)) : keys.sort();
 
@@ -116,7 +117,7 @@ R.quiz = (st, body, api) => {
 };
 R.real = (st, body, api, ctx) => {
   const key = ctx.lesson.id + ':real'; const ticks = S.checks[key] || [];
-  const files = st.file === 'excel' ? [['📗 Excel practice workbook', 'practice/Lumi_Excel_Practice.xlsx']] : [['📊 Lumi Boba dataset (Excel)', 'practice/LumiBoba_PowerBI_Data.xlsx'], ['🧹 Messy_Customers.csv', 'practice/Messy_Customers.csv']];
+  const files = st.file === 'excel' ? [['📗 Excel practice workbook', 'practice/Lumi_Excel_Practice.xlsx']] : [['📊 Lumi Boba dataset (Excel)', 'practice/LumiBoba_PowerBI_Data.xlsx'], ['🧹 Messy_Customers.csv', 'practice/Messy_Customers.csv'], ['↕ Budget_Wide.csv', 'practice/Budget_Wide.csv'], ['➕ Orders_Q1.csv', 'practice/Orders_Q1.csv'], ['➕ Orders_Q2.csv', 'practice/Orders_Q2.csv']];
   body.innerHTML = `<h2>🛠️ ${esc(st.title)}</h2><p class="lead">Optional, but this is where it really sticks. Tick things off as you go.</p><ul class="realist">${st.items.map((it, i) => `<li><label><input type="checkbox" data-i="${i}" ${ticks[i] ? 'checked' : ''}> <span>${it}</span></label></li>`).join('')}</ul><div class="files">${files.map(([n, u]) => `<a class="btn ghost small" href="${u}" target="_blank" rel="noopener">${n}</a>`).join('')}</div><p class="small muted">Files open from the published GitHub site. If a download doesn't start here, use the copies in your GitHub repo's <code>practice</code> folder.</p>`;
   $$('input', body).forEach(c => c.onchange = () => { const a = S.checks[key] || []; a[+c.dataset.i] = c.checked; S.checks[key] = a; save(); if(c.checked) xpFloat(2, c); });
   api.pass(true); return {};
@@ -134,18 +135,18 @@ R.order = (st, body, api) => {
 
 // ---------- Excel sheet ----------
 R.sheet = (st, body, api) => {
-  const sheet = new XL.Sheet(st.cells, {cols:st.cols, rows:st.rows}); const undo = [];
+  const sheet = new XL.Sheet(st.cells, {cols:st.cols, rows:st.rows, names:st.names || {}}); const undo = [];
   let sel = {a: st.select || 'A1', b: st.select || 'A1'}; let editing = false;
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p>
    <div class="xl"><div class="xl-bar"><span class="namebox"></span><span class="fx">fx</span><input class="fxin" spellcheck="false" autocomplete="off" aria-label="Formula bar"></div>
-   <div class="xl-tools"><button class="tb" data-a="fill" title="Fill down (Ctrl+D)">Fill ⬇</button><button class="tb" data-a="undo" title="Undo (Ctrl+Z)">↶ Undo</button><button class="tb" data-a="reset">↺ Reset</button><span class="small muted">Click a cell · type · Enter. Double-click to edit. Shift+click selects a range.</span></div>
-   <div class="xl-wrap" tabindex="0"><table class="xl-grid"></table></div></div>`;
+   <div class="xl-tools"><button class="tb" data-a="fill" title="Fill down (Ctrl+D)">Fill ⬇</button><button class="tb" data-a="undo" title="Undo (Ctrl+Z)">↶ Undo</button><button class="tb" data-a="reset">↺ Reset</button>${st.goalseek ? '<button class="tb gs" data-a="goal">🎯 Goal Seek</button>' : ''}${st.names ? `<span class="pill small">Names: ${Object.entries(st.names).map(([k, v]) => k + ' = ' + v).join(', ')}</span>` : ''}<span class="small muted">Click a cell · type · Enter. Double-click to edit. Shift+click selects a range.</span></div>
+   ${st.goalseek ? `<div class="gspanel" hidden><b>Goal Seek</b> Set cell <input id="gsSet" class="smallin" value="B5"> To value <input id="gsTo" class="smallin" placeholder="1500"> By changing cell <input id="gsBy" class="smallin" value="B1"> <button class="btn small" id="gsGo">OK</button></div>` : ''}<div class="xl-wrap" tabindex="0"><table class="xl-grid"></table></div></div>`;
   const grid = $('.xl-grid', body), wrap = $('.xl-wrap', body), fx = $('.fxin', body), nb = $('.namebox', body);
   const rc = a => XL.parseRef(a); const inSel = (c, r) => { const A = rc(sel.a), B = rc(sel.b); return c >= Math.min(A.c,B.c) && c <= Math.max(A.c,B.c) && r >= Math.min(A.r,B.r) && r <= Math.max(A.r,B.r); };
   function draw(){
     let html = '<tr><th class="corner"></th>' + Array.from({length:st.cols}, (_, i) => `<th>${XL.numToCol(i+1)}</th>`).join('') + '</tr>';
     for(let r=1; r<=st.rows; r++){ html += `<tr><th>${r}</th>`; for(let c=1; c<=st.cols; c++){ const a = XL.addr(c, r), v = sheet.value(a), raw = sheet.raw[a];
-      const cls = [inSel(c, r) ? 'sel' : '', a === sel.a ? 'act' : '', typeof v === 'number' ? 'num' : '', XL.isErr(v) ? 'err' : '', typeof raw === 'string' && raw.startsWith('=') ? 'f' : '', r === 1 ? 'hdr' : ''].join(' ');
+      const cls = [inSel(c, r) ? 'sel' : '', a === sel.a ? 'act' : '', typeof v === 'number' ? 'num' : '', XL.isErr(v) ? 'err' : '', typeof raw === 'string' && raw.startsWith('=') ? 'f' : '', r === 1 ? 'hdr' : '', sheet.spillOf && sheet.spillOf[a] && sheet.raw[a] === undefined ? 'spill' : ''].join(' ');
       html += `<td class="${cls}" data-a="${a}" title="${esc(raw ?? '')}">${esc(XL.fmt(v))}</td>`; } html += '</tr>'; }
     grid.innerHTML = html; nb.textContent = sel.a === sel.b ? sel.a : sel.a + ':' + sel.b; if(!editing) fx.value = sheet.raw[sel.a] ?? '';
   }
@@ -175,7 +176,15 @@ R.sheet = (st, body, api) => {
     if(e.key === 'Enter'){ e.preventDefault(); commit(fx.value); move(0, 1); wrap.focus(); }
     else if(e.key === 'Tab'){ e.preventDefault(); commit(fx.value); move(1, 0); wrap.focus(); }
     else if(e.key === 'Escape'){ editing = false; draw(); wrap.focus(); } });
-  $$('.tb', body).forEach(b => b.onclick = () => { const a = b.dataset.a; if(a === 'fill') fill(); if(a === 'undo' && undo.length){ sheet.raw = JSON.parse(undo.pop()); sheet.recalc(); draw(); } if(a === 'reset'){ snap(); sheet.raw = {}; for(const k in st.cells) sheet.raw[k] = st.cells[k]; sheet.recalc(); draw(); } wrap.focus(); });
+  $$('.tb', body).forEach(b => b.onclick = () => { const a = b.dataset.a; if(a === 'fill') fill(); if(a === 'undo' && undo.length){ sheet.raw = JSON.parse(undo.pop()); sheet.recalc(); draw(); } if(a === 'reset'){ snap(); sheet.raw = {}; for(const k in st.cells) sheet.raw[k] = st.cells[k]; sheet.recalc(); draw(); } if(a === 'goal'){ const p = $('.gspanel', body); p.hidden = !p.hidden; if(!p.hidden){ $('#gsTo', body).focus(); return; } } wrap.focus(); });
+  if(st.goalseek){ $$('.gspanel input', body).forEach(i => i.addEventListener('keydown', e => e.stopPropagation()));
+    $('#gsGo', body).onclick = () => { const setA = $('#gsSet', body).value.trim().toUpperCase(), byA = $('#gsBy', body).value.trim().toUpperCase(), target = +$('#gsTo', body).value;
+      if(!XL.parseRef(setA) || !XL.parseRef(byA) || isNaN(target) || $('#gsTo', body).value === ''){ api.fail('Fill in all three boxes: a cell, a number, a cell.', true); return; }
+      if(!sheet.formulaOf(setA)){ api.fail(`${setA} must contain a formula that depends on ${byA}.`, true); return; }
+      snap(); const f = x => { sheet.raw[byA] = String(x); sheet.recalc(); return +sheet.value(setA) - target; };
+      let x0 = +sheet.value(byA) || 0, x1 = x0 + 1, f0 = f(x0), f1 = f(x1), ok = false;
+      for(let k = 0; k < 60; k++){ if(Math.abs(f1) < 1e-7){ ok = true; break; } const d = f1 - f0; if(d === 0) break; const x2 = x1 - f1 * (x1 - x0) / d; x0 = x1; f0 = f1; x1 = x2; f1 = f(x1); }
+      sheet.raw[byA] = String(+x1.toFixed(6)); sheet.recalc(); draw(); $('.gspanel', body).hidden = true; toast(ok || Math.abs(f1) < 1e-4 ? `🎯 Goal Seek found a solution: ${byA} = ${+x1.toFixed(4)}` : 'Goal Seek could not find an exact solution.'); }; }
   draw(); setTimeout(() => wrap.focus({preventScroll:true}), 50);
   return { check: () => { if(editing && fx.value !== (sheet.raw[sel.a] ?? '')) { commit(fx.value); draw(); } return st.check(sheet); }, solve: () => { snap(); for(const k in st.solution) sheet.raw[k] = st.solution[k]; sheet.recalc(); editing = false; draw(); }, hint: st.hint };
 };
@@ -217,7 +226,7 @@ R.table = (st, body, api) => {
 const PFIELDS = ['Region','Store','Category','Product','Month','Quarter','Revenue','Qty','OrderID'];
 R.pivot = (st, body, api) => {
   let C = {rows:[], cols:[], val:null, agg:'Sum'};
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="pv"><div class="pv-fields"><b>PivotTable Fields</b>${PFIELDS.map(f => `<div class="pf"><span>${f}</span><span class="pfb"><button data-f="${f}" data-z="rows" title="Add to Rows">R</button><button data-f="${f}" data-z="cols" title="Add to Columns">C</button><button data-f="${f}" data-z="val" title="Add to Values">Σ</button></span></div>`).join('')}<div class="small muted">R = Rows · C = Columns · Σ = Values</div></div><div class="pv-zones"></div><div class="pv-out"></div></div>`;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="small muted" style="margin-top:6px">Data: 2025 orders (${FLATX.length} rows)</div><div class="pv"><div class="pv-fields"><b>PivotTable Fields</b>${PFIELDS.map(f => `<div class="pf"><span>${f}</span><span class="pfb"><button data-f="${f}" data-z="rows" title="Add to Rows">R</button><button data-f="${f}" data-z="cols" title="Add to Columns">C</button><button data-f="${f}" data-z="val" title="Add to Values">Σ</button></span></div>`).join('')}<div class="small muted">R = Rows · C = Columns · Σ = Values</div></div><div class="pv-zones"></div><div class="pv-out"></div></div>`;
   function draw(){
     const z = $('.pv-zones', body);
     const chip = (f, zone) => `<span class="chip">${f}<button data-rm="${zone}" data-f="${f}">✕</button></span>`;
@@ -228,12 +237,12 @@ R.pivot = (st, body, api) => {
   }
   function renderPivot(){
     if(!C.val || !C.rows.length) return '<div class="empty">Add a field to <b>Rows</b> and one to <b>Values</b> to see your pivot.</div>';
-    const rf = C.rows[0], cf = C.cols[0]; const rk = sortKeys([...new Set(FLAT.map(r => r[rf]))], rf), ck = cf ? sortKeys([...new Set(FLAT.map(r => r[cf]))], cf) : [null];
+    const rf = C.rows[0], cf = C.cols[0]; const rk = sortKeys([...new Set(FLATX.map(r => r[rf]))], rf), ck = cf ? sortKeys([...new Set(FLATX.map(r => r[cf]))], cf) : [null];
     const agg = rows => { const v = rows.map(r => r[C.val]); if(C.agg === 'Count') return v.length; const n = v.filter(x => typeof x === 'number'); const s = n.reduce((a, b) => a + b, 0); return C.agg === 'Sum' ? s : n.length ? s / n.length : 0; };
     const f = v => C.agg === 'Count' ? v.toLocaleString() : C.val === 'Revenue' ? '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : (+v.toFixed(2)).toLocaleString();
     let html = `<table class="pt"><tr><th>${rf}</th>${ck.map(k => `<th>${k ?? `${C.agg} of ${C.val}`}</th>`).join('')}${cf ? '<th>Grand Total</th>' : ''}</tr>`;
-    rk.forEach(k => { const rr = FLAT.filter(r => r[rf] === k); html += `<tr><td>${esc(k)}</td>${ck.map(c => `<td class="num">${f(agg(c === null ? rr : rr.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num tot">${f(agg(rr))}</td>` : ''}</tr>`; });
-    html += `<tr class="gt"><td>Grand Total</td>${ck.map(c => `<td class="num">${f(agg(c === null ? FLAT : FLAT.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num">${f(agg(FLAT))}</td>` : ''}</tr></table>`;
+    rk.forEach(k => { const rr = FLATX.filter(r => r[rf] === k); html += `<tr><td>${esc(k)}</td>${ck.map(c => `<td class="num">${f(agg(c === null ? rr : rr.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num tot">${f(agg(rr))}</td>` : ''}</tr>`; });
+    html += `<tr class="gt"><td>Grand Total</td>${ck.map(c => `<td class="num">${f(agg(c === null ? FLATX : FLATX.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num">${f(agg(FLATX))}</td>` : ''}</tr></table>`;
     return html;
   }
   $$('.pfb button', body).forEach(b => b.onclick = () => { const f = b.dataset.f, z = b.dataset.z; C.rows = C.rows.filter(x => x !== f); C.cols = C.cols.filter(x => x !== f); if(C.val === f) C.val = null;
@@ -246,7 +255,7 @@ R.chart = (st, body, api) => {
   let C = {type:'column', axis:'Region'};
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="chartbox"><div class="ch-tools"><div><b>Chart type</b><div class="seg" id="ct">${[['column','📊 Column'],['bar','📶 Bar'],['line','📈 Line'],['pie','🥧 Pie']].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div><div><b>Axis (categories)</b><div class="seg" id="ca">${['Region','Category','Month','Store'].map(v => `<button data-v="${v}">${v}</button>`).join('')}</div></div><div class="small muted">Values: Sum of Revenue</div></div><div class="ch-out"></div></div>`;
   function draw(){ $$('#ct button', body).forEach(b => b.classList.toggle('on', b.dataset.v === C.type)); $$('#ca button', body).forEach(b => b.classList.toggle('on', b.dataset.v === C.axis));
-    const keys = sortKeys([...new Set(FLAT.map(r => r[C.axis]))], C.axis); const data = keys.map(k => ({key:k, value:FLAT.filter(r => r[C.axis] === k).reduce((s, r) => s + r.Revenue, 0)}));
+    const keys = sortKeys([...new Set(FLATX.map(r => r[C.axis]))], C.axis); const data = keys.map(k => ({key:k, value:FLATX.filter(r => r[C.axis] === k).reduce((s, r) => s + r.Revenue, 0)}));
     $('.ch-out', body).innerHTML = chartSVG(C.type, data); }
   $$('#ct button', body).forEach(b => b.onclick = () => { C.type = b.dataset.v; draw(); }); $$('#ca button', body).forEach(b => b.onclick = () => { C.axis = b.dataset.v; draw(); });
   draw(); return { check: () => st.check(C), solve: () => { C = {...st.solution}; draw(); }, hint: 'Time on the axis → a line chart shows the trend best.' };
@@ -262,15 +271,20 @@ const PQ_GOALS = {
   number:['Amount is a Number type (no errors)', s => { const c = s.cols.find(c => c.name === 'Amount'); return c && c.type === 'number' && s.rows.every(r => typeof r.Amount === 'number'); }],
   split:['Location split into City + Region', s => !s.cols.some(c => c.name === 'Location') && s.cols.length >= 5]
 };
+const mkPQ = d => ({ cols: d.cols.map(c => ({name:c, type: typeof d.rows[0][d.cols.indexOf(c)] === 'number' ? 'number' : 'text'})), rows: d.rows.map(r => Object.fromEntries(d.cols.map((c, i) => [c, r[i]]))) });
+const PQ_BTN = { unpivot:'<button data-op="unpivot" data-c>↕ Unpivot other columns</button>', rename:'<span class="rn"><input id="rnTo" class="smallin" placeholder="new name"><button data-op="rename" data-c>✏️ Rename</button></span>', append:'<button data-op="append">➕ Append Q2 table</button>', merge:'<button data-op="merge">🔗 Merge with Stores (on StoreID)</button>', group:'<button data-op="group" data-c>Σ Group By → Sum of Amount</button>' };
 R.pq = (st, body, api) => {
-  let steps = [], selCol = null, state = PBI.PQ.run(PQ_START, steps);
+  const START = st.data ? mkPQ(DATA.pq[st.data]) : PQ_START;
+  const enrich = s => s.op === 'append' ? {...s, data:DATA.pq[st.extra]} : s.op === 'merge' ? {...s, data:DATA.pq.storelk, key:'StoreID', take:'Region'} : s.op === 'group' ? {...s, agg:'Amount'} : s;
+  const goals = st.goalFns ? st.goalFns.map(([l, f]) => [l, f]) : st.goals.map(g => PQ_GOALS[g]);
+  let steps = [], selCol = null, state = PBI.PQ.run(START, steps);
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="pq"><div class="pq-main"><div class="pq-tools">
-    <span class="grp"><b>Table</b><button data-op="removeBlank">🧹 Remove blank rows</button><button data-op="removeDup">👯 Remove duplicates</button></span>
-    <span class="grp"><b>Column</b> <span class="selname"></span><button data-op="trim" data-c>✂️ Trim</button><button data-op="proper" data-c>Aa Capitalize Each Word</button><button data-op="type" data-to="number" data-c>123 To Number</button><button data-op="split" data-c>⫽ Split by comma</button></span></div>
+    ${st.ops ? `<span class="grp"><b>Transform</b> <span class="selname"></span>${st.ops.map(o => PQ_BTN[o]).join('')}</span>` : `<span class="grp"><b>Table</b><button data-op="removeBlank">🧹 Remove blank rows</button><button data-op="removeDup">👯 Remove duplicates</button></span>
+    <span class="grp"><b>Column</b> <span class="selname"></span><button data-op="trim" data-c>✂️ Trim</button><button data-op="proper" data-c>Aa Capitalize Each Word</button><button data-op="type" data-to="number" data-c>123 To Number</button><button data-op="split" data-c>⫽ Split by comma</button></span>`}</div>
     <div class="pq-grid"></div></div><div class="pq-side"><b>Goals</b><ul class="goals"></ul><b>Applied Steps</b><ol class="steps"></ol></div></div>`;
-  function label(s){ return {removeBlank:'Removed Blank Rows', removeDup:'Removed Duplicates', trim:`Trimmed ${s.col}`, proper:`Capitalized ${s.col}`, type:`Changed ${s.col} to ${s.to}`, split:`Split ${s.col} by comma`}[s.op]; }
+  function label(s){ return {removeBlank:'Removed Blank Rows', removeDup:'Removed Duplicates', trim:`Trimmed ${s.col}`, proper:`Capitalized ${s.col}`, type:`Changed ${s.col} to ${s.to}`, split:`Split ${s.col} by comma`, unpivot:`Unpivoted other columns`, rename:`Renamed ${s.col} → ${s.to}`, append:'Appended Q2', merge:'Merged Stores (Region)', group:`Grouped by ${s.col}`}[s.op]; }
   function draw(){
-    state = PBI.PQ.run(PQ_START, steps);
+    state = PBI.PQ.run(START, steps.map(enrich));
     const icon = t => t === 'number' ? '1²3' : t === 'date' ? '📅' : 'ABC';
     $('.pq-grid', body).innerHTML = `<table class="pqt"><tr>${state.cols.map(c => `<th class="${c.name === selCol ? 'on' : ''}" data-c="${esc(c.name)}"><span class="ty">${icon(c.type)}</span> ${esc(c.name)}</th>`).join('')}</tr>${state.rows.map(r => `<tr>${state.cols.map(c => { const v = r[c.name]; return `<td class="${v === 'Error' ? 'err' : ''} ${String(v ?? '').trim() === '' ? 'blank' : ''}">${v === '' || v == null ? '<i>null</i>' : esc(String(v).replace(/ /g, '·'))}</td>`; }).join('')}</tr>`).join('')}</table><div class="small muted">${state.rows.length} rows · spaces shown as · so you can spot them · click a column header to select it</div>`;
     $$('.pqt th', body).forEach(th => th.onclick = () => { selCol = th.dataset.c; draw(); });
@@ -278,13 +292,15 @@ R.pq = (st, body, api) => {
     $$('[data-c]', $('.pq-tools', body)).forEach(b => b.disabled = !selCol);
     $('.steps', body).innerHTML = '<li class="src">Source</li>' + steps.map((s, i) => `<li>${label(s)} <button data-del="${i}" title="Delete step">✕</button></li>`).join('');
     $$('[data-del]', body).forEach(b => b.onclick = () => { steps.splice(+b.dataset.del); draw(); });
-    $('.goals', body).innerHTML = st.goals.map(g => `<li class="${PQ_GOALS[g][1](state) ? 'ok' : ''}">${PQ_GOALS[g][1](state) ? '✅' : '⬜'} ${PQ_GOALS[g][0]}</li>`).join('');
+    $('.goals', body).innerHTML = goals.map(([l, f]) => `<li class="${f(state) ? 'ok' : ''}">${f(state) ? '✅' : '⬜'} ${l}</li>`).join('');
   }
-  $$('.pq-tools button', body).forEach(b => b.onclick = () => { const op = b.dataset.op; const s = {op}; if(b.hasAttribute('data-c')){ if(!selCol) return; s.col = selCol; } if(op === 'type') s.to = b.dataset.to; if(op === 'split') s.delim = ',';
+  $$('.pq-tools button', body).forEach(b => b.onclick = () => { const op = b.dataset.op; const s = {op}; if(b.hasAttribute('data-c')){ if(!selCol) return; s.col = selCol; } if(op === 'type') s.to = b.dataset.to; if(op === 'split') s.delim = ','; if(op === 'unpivot') s.keep = [selCol]; if(op === 'rename'){ const to = ($('#rnTo', body).value || '').trim(); if(!to){ api.fail('Type the new column name first.', true); return; } if(state.cols.some(c => c.name === to)){ api.fail(`There is already a column called ${to}.`, true); return; } s.to = to; $('#rnTo', body).value = ''; }
+    if(op === 'group' && !state.rows.every(r => typeof r.Amount === 'number')){ api.fail('Select the column to group by first.', true); return; }
     if(op === 'split' && !String(state.rows[0]?.[selCol] ?? '').includes(',')){ api.fail(`"${selCol}" has no commas to split on. Pick the Location column.`, true); return; }
-    steps.push(s); if(op === 'split') selCol = null; draw(); });
+    steps.push(s); if(op === 'split' || op === 'unpivot' || op === 'rename' || op === 'group') selCol = null; draw(); });
+  const rn = $('#rnTo', body); if(rn) rn.addEventListener('keydown', e => e.stopPropagation());
   draw();
-  return { check: () => { const miss = st.goals.filter(g => !PQ_GOALS[g][1](state)); return miss.length ? 'Still to do: ' + miss.map(g => PQ_GOALS[g][0]).join(', ') + '.' : true; }, solve: () => { steps = JSON.parse(JSON.stringify(st.solution)); selCol = null; draw(); }, hint: 'Remove blanks first. Then select a column header and use the column buttons. Remove duplicates last.' };
+  return { check: () => { const miss = goals.filter(([l, f]) => !f(state)); return miss.length ? 'Still to do: ' + miss.map(g => g[0]).join(', ') + '.' : true; }, solve: () => { steps = JSON.parse(JSON.stringify(st.solution)); selCol = null; draw(); }, hint: st.ops ? 'Click a column header to select it, then use the Transform buttons. Delete a step with ✕ to undo it.' : 'Remove blanks first. Then select a column header and use the column buttons. Remove duplicates last.' };
 };
 
 // ---------- Model view ----------
@@ -316,47 +332,79 @@ R.model = (st, body, api) => {
 // ---------- DAX ----------
 R.dax = (st, body, api) => {
   const LM = PBI.buildModel(DATA); (st.pre || []).forEach(t => { const m = PBI.defineMeasure(LM, t); LM.measures[m.name] = m; });
+  const FIL = st.year ? [{table:'Calendar', col:'Year', pred:v => v === st.year}] : [];
+  const autoCheck = (v, m) => { if(st.need && !st.need.test(m.text)) return 'Use the function the task asks for. Peek at 💡 Stuck? if you need it.';
+    const SM = PBI.buildModel(DATA); (st.pre || []).forEach(t => { const q = PBI.defineMeasure(SM, t); SM.measures[q.name] = q; }); const sol = PBI.defineMeasure(SM, st.solution); SM.measures[sol.name] = sol;
+    const close = (a, b) => (a == null && b == null) || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 0.006 * Math.max(1, Math.abs(b)));
+    if(!close(v, PBI.evalMeasure(SM, sol.ast, FIL))) return 'The total doesn\'t match the expected result yet. Compare with the hint.';
+    const [mt, mc] = st.matrix; const A = PBI.groupBy(LM, mt, mc, m.ast, FIL), B = PBI.groupBy(SM, mt, mc, sol.ast, FIL);
+    const bad = A.find((r, i) => !close(r.value, B[i].value)); return bad ? `The total looks right, but the ${bad.key} row doesn't match. Check your filters.` : true; };
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="dax"><div class="dax-main"><div class="dax-bar"><span class="fx">fx</span><textarea class="daxin" rows="2" spellcheck="false" placeholder="${esc(st.target)} = ">${esc(st.target)} = </textarea></div><div class="row"><button class="btn small" id="mk">✓ Create measure</button><span class="small muted">Ctrl+Enter</span></div><div class="dax-out"></div></div>
     <div class="dax-side"><b>Fields</b>${Object.keys(LM.T).map(t => `<details ${t === 'Sales' ? 'open' : ''}><summary>🗂️ ${t}</summary>${LM.T[t].cols.map(c => `<button class="ins" data-v="${t}[${c}]">${c}</button>`).join('')}</details>`).join('')}<div class="measures"></div></div></div>`;
   const ta = $('.daxin', body); let last = null;
   function side(){ $('.measures', body).innerHTML = Object.keys(LM.measures).length ? '<b>Measures</b>' + Object.keys(LM.measures).map(n => `<button class="ins m" data-v="[${n}]">🧮 ${n}</button>`).join('') : ''; $$('.ins', body).forEach(b => b.onclick = () => { const p = ta.selectionStart; ta.value = ta.value.slice(0, p) + b.dataset.v + ta.value.slice(ta.selectionEnd); ta.focus(); ta.setSelectionRange(p + b.dataset.v.length, p + b.dataset.v.length); }); }
   function run(){
-    try{ const m = PBI.defineMeasure(LM, ta.value); LM.measures[m.name] = m; const v = PBI.evalMeasure(LM, m.ast); last = {v, m};
-      const [mt, mc] = st.matrix; const g = PBI.groupBy(LM, mt, mc, m.ast); const f = x => x == null ? '(blank)' : st.pct ? (x*100).toFixed(1) + '%' : typeof x === 'number' ? (/revenue|value|check/i.test(m.name) ? '$' : '') + (+x.toFixed(2)).toLocaleString() : x;
-      $('.dax-out', body).innerHTML = `<div class="kpi"><div class="kv">${f(v)}</div><div class="kl">${esc(m.name)}</div></div><table class="pt small"><tr><th>${mc}</th><th>${esc(m.name)}</th></tr>${g.map(r => `<tr><td>${esc(r.key)}</td><td class="num">${f(r.value)}</td></tr>`).join('')}<tr class="gt"><td>Total</td><td class="num">${f(v)}</td></tr></table><div class="small muted">Same measure, a different filter on each row: that's filter context.</div>`;
+    try{ const m = PBI.defineMeasure(LM, ta.value); LM.measures[m.name] = m; const v = PBI.evalMeasure(LM, m.ast, FIL); last = {v, m};
+      const [mt, mc] = st.matrix; const g = PBI.groupBy(LM, mt, mc, m.ast, FIL); const f = x => x == null ? '(blank)' : st.pct ? (x*100).toFixed(1) + '%' : typeof x === 'number' ? (/revenue|value|check/i.test(m.name) ? '$' : '') + (+x.toFixed(2)).toLocaleString() : x;
+      $('.dax-out', body).innerHTML = `<div class="kpi"><div class="kv">${f(v)}</div><div class="kl">${esc(m.name)}</div></div><table class="pt small"><tr><th>${mc}</th><th>${esc(m.name)}</th></tr>${g.map(r => `<tr><td>${esc(r.key)}</td><td class="num">${f(r.value)}</td></tr>`).join('')}<tr class="gt"><td>Total</td><td class="num">${f(v)}</td></tr></table><div class="small muted">${st.year ? `Filtered to ${st.year} · ` : ''}Same measure, a different filter on each row: that's filter context.</div>`;
       side(); return true;
     }catch(e){ last = null; $('.dax-out', body).innerHTML = `<div class="errbox">⚠️ ${esc(e.message)}</div>`; return false; }
   }
   $('#mk', body).onclick = () => { if(run()) api.check(); };
   ta.addEventListener('keydown', e => { e.stopPropagation(); if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); $('#mk', body).click(); } });
   side(); setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 60);
-  return { check: () => { if(!last && !run()) return 'Fix the error first.'; if(!last) return 'Create the measure first.'; return st.check(last.v, last.m, LM); }, solve: () => { ta.value = st.solution; run(); }, hint: 'Click field names on the right to insert them without typos.', noPrimaryCheck:false };
+  return { check: () => { if(!last && !run()) return 'Fix the error first.'; if(!last) return 'Create the measure first.'; return st.auto ? autoCheck(last.v, last.m) : st.check(last.v, last.m, LM); }, solve: () => { ta.value = st.solution; run(); }, hint: 'Click field names on the right to insert them without typos.', noPrimaryCheck:false };
+};
+
+// ---------- Calculated column ----------
+R.calccol = (st, body, api) => {
+  const LM = PBI.buildModel(DATA); let last = null;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="dax-bar"><span class="fx">fx</span><textarea class="daxin" rows="2" spellcheck="false">Size = </textarea></div><div class="row"><button class="btn small" id="mkc">✓ Create column</button><span class="small muted">Row context: the formula runs once for every row of ${st.table}.</span></div><div class="cc-out"></div>`;
+  const ta = $('.daxin', body); ta.addEventListener('keydown', e => { e.stopPropagation(); if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); $('#mkc', body).click(); } });
+  function run(){ try{ const c = PBI.calcColumn(LM, st.table, ta.value); last = c; const rows = LM.T[st.table].rows; const counts = {}; c.vals.forEach(v => counts[v] = (counts[v] || 0) + 1);
+      $('.cc-out', body).innerHTML = `<div class="row">${Object.entries(counts).map(([k, n]) => `<span class="chip">${esc(k)}: ${n} rows</span>`).join('')}</div><div class="pq-grid"><table class="pqt"><tr>${LM.T[st.table].cols.map(cn => `<th>${cn}</th>`).join('')}<th class="on">${esc(c.name)}</th></tr>${rows.slice(0, 10).map((r, i) => `<tr>${LM.T[st.table].cols.map(cn => `<td>${esc(r[cn])}</td>`).join('')}<td><b>${esc(c.vals[i])}</b></td></tr>`).join('')}</table><div class="small muted">First 10 of ${rows.length} rows</div></div>`; return true; }
+    catch(e){ last = null; $('.cc-out', body).innerHTML = `<div class="errbox">⚠️ ${esc(e.message)}</div>`; return false; } }
+  $('#mkc', body).onclick = () => { if(run()) api.check(); };
+  setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 60);
+  return { check: () => { if(!last && !run()) return 'Fix the error first.'; return st.check(last, LM); }, solve: () => { ta.value = st.solution; run(); }, hint: 'IF(condition, value_if_true, value_if_false), e.g. IF(Sales[Revenue] >= 50, "Large", "Small")' };
+};
+// ---------- Row-level security ----------
+R.rls = (st, body, api) => {
+  let set = null; const tr = M.measures['Total Revenue'];
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rls"><div class="rls-role"><b>🔐 Manage roles</b><div class="small muted">Role: West Managers · Table: Stores</div><div class="dax-bar"><span class="fx">DAX</span><textarea class="daxin" rows="1" spellcheck="false" placeholder='[Region] = "West"'></textarea></div><button class="btn small" id="va">👁️ View as role</button></div><div class="rls-out"></div></div>`;
+  const ta = $('.daxin', body); ta.addEventListener('keydown', e => { e.stopPropagation(); if(e.key === 'Enter'){ e.preventDefault(); $('#va', body).click(); } });
+  function run(){ try{ set = PBI.rowFilter(M, 'Stores', ta.value); const f = [{table:'Stores', rowPred: r => set.has(r)}]; const v = PBI.evalMeasure(M, tr.ast, f);
+      $('.rls-out', body).innerHTML = `<div class="kpi"><div class="kv">${fmtNum(+v.toFixed(2), true)}</div><div class="kl">Total Revenue · viewing as West Managers</div></div><div class="row">${M.T.Stores.rows.map(r => `<span class="chip ${set.has(r) ? 'good' : ''}" style="${set.has(r) ? '' : 'opacity:.35;text-decoration:line-through'}">${r.Store} · ${r.Region}</span>`).join('')}</div>`; return true; }
+    catch(e){ set = null; $('.rls-out', body).innerHTML = `<div class="errbox">⚠️ ${esc(e.message)}</div>`; return false; } }
+  $('#va', body).onclick = () => { if(run()) api.check(); };
+  setTimeout(() => ta.focus(), 60);
+  return { check: () => { if(!set && !run()) return 'Write a filter like [Region] = "West" first.'; return st.check(set, M); }, solve: () => { ta.value = st.solution; run(); }, hint: 'A role filter is a true/false test per row: [Region] = "West"' };
 };
 
 // ---------- Report builder ----------
 const DIMS = ['Stores.Region','Stores.Store','Products.Category','Products.Product','Calendar.Month','Calendar.Quarter'];
 const VTYPES = [['card','🔢 Card'],['column','📊 Column'],['bar','📶 Bar'],['line','📈 Line'],['pie','🍩 Donut'],['table','📋 Table']];
 R.report = (st, body, api) => {
-  let C = {tiles: Array.from({length: st.tiles}, () => ({type:null, axis:null, measure:null})), slicer:'All'}; let cur = 0;
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rb"><div class="rb-canvas"><div class="slicer"><b>Region slicer:</b> ${['All','East','West','Midwest','South'].map(r => `<button data-r="${r}">${r}</button>`).join('')}</div><div class="tiles t${st.tiles}"></div></div>
+  let C = {tiles: Array.from({length: st.tiles}, () => ({type:null, axis:null, measure:null})), slicer:'All', year:null}; let cur = 0;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rb"><div class="rb-canvas"><div class="slicer"><b>Region slicer:</b> ${['All','East','West','Midwest','South'].map(r => `<button data-r="${r}">${r}</button>`).join('')}${st.years ? ' <b style="margin-left:10px">Year:</b> ' + ['All',2024,2025].map(y => `<button data-y="${y}">${y}</button>`).join('') : ''}</div><div class="tiles t${st.tiles}"></div></div>
     <div class="rb-side"><b>Visualizations</b><div class="vtypes">${VTYPES.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div><b>Fields: categories</b><div class="flist">${DIMS.map(d => `<button data-d="${d}">${d.replace('.', ' › ')}</button>`).join('')}</div><b>Measures</b><div class="flist">${Object.keys(M.measures).map(m => `<button data-m="${m}">🧮 ${m}</button>`).join('')}</div></div></div>`;
-  function filt(){ return C.slicer === 'All' ? [] : [{table:'Stores', col:'Region', pred:v => v === C.slicer}]; }
+  function filt(){ return (C.slicer === 'All' ? [] : [{table:'Stores', col:'Region', pred:v => v === C.slicer}]).concat(C.year ? [{table:'Calendar', col:'Year', pred:v => v === C.year}] : []); }
   function tile(t){ if(!t.type || !t.measure) return `<div class="ph">${!t.type ? '① Pick a visual type' : '② Pick a measure'}${t.type && t.type !== 'card' && !t.axis ? '<br>③ Pick a category' : ''}</div>`;
-    const money = /Revenue|Value/.test(t.measure);
-    if(t.type === 'card'){ const v = PBI.evalMeasure(M, M.measures[t.measure].ast, filt()); return `<div class="kpi"><div class="kv">${fmtNum(+(+v).toFixed(2), money)}</div><div class="kl">${t.measure}${C.slicer !== 'All' ? ' · ' + C.slicer : ''}</div></div>`; }
+    const money = /Revenue|Value/.test(t.measure) && !/%/.test(t.measure), pct = /%/.test(t.measure);
+    if(t.type === 'card'){ const v = PBI.evalMeasure(M, M.measures[t.measure].ast, filt()); return `<div class="kpi"><div class="kv">${pct ? (v == null ? '(blank)' : (v*100).toFixed(1) + '%') : fmtNum(+(+v).toFixed(2), money)}</div><div class="kl">${t.measure}${C.slicer !== 'All' ? ' · ' + C.slicer : ''}${C.year ? ' · ' + C.year : ''}</div></div>`; }
     if(!t.axis) return `<div class="ph">③ Pick a category for the axis</div>`;
     const [tb, col] = t.axis.split('.'); const data = PBI.groupBy(M, tb, col, t.measure, filt()).filter(d => d.value !== null && !(tb === 'Stores' && C.slicer !== 'All' && d.value === 0));
-    return `<div class="vt-title">${t.measure} by ${col}</div>${chartSVG(t.type, data, {money, axisName:col, valName:t.measure, compact: C.tiles.length > 1})}`; }
-  function draw(){ $$('.slicer button', body).forEach(b => b.classList.toggle('on', b.dataset.r === C.slicer));
+    return `<div class="vt-title">${t.measure} by ${col}</div>${chartSVG(t.type, data, {money, pct, axisName:col, valName:t.measure, compact: C.tiles.length > 1})}`; }
+  function draw(){ $$('.slicer button[data-r]', body).forEach(b => b.classList.toggle('on', b.dataset.r === C.slicer)); $$('.slicer button[data-y]', body).forEach(b => b.classList.toggle('on', String(b.dataset.y) === String(C.year || 'All')));
     $('.tiles', body).innerHTML = C.tiles.map((t, i) => `<div class="tile ${i === cur ? 'cur' : ''}" data-i="${i}">${tile(t)}</div>`).join('');
     $$('.tile', body).forEach(el => el.onclick = () => { cur = +el.dataset.i; draw(); });
     const t = C.tiles[cur]; $$('.vtypes button', body).forEach(b => b.classList.toggle('on', b.dataset.v === t.type)); $$('[data-d]', body).forEach(b => b.classList.toggle('on', b.dataset.d === t.axis)); $$('[data-m]', body).forEach(b => b.classList.toggle('on', b.dataset.m === t.measure)); }
   $$('.vtypes button', body).forEach(b => b.onclick = () => { C.tiles[cur].type = b.dataset.v; if(b.dataset.v === 'card') C.tiles[cur].axis = null; draw(); });
   $$('[data-d]', body).forEach(b => b.onclick = () => { if(C.tiles[cur].type === 'card'){ api.fail('Cards show one number, so they don\'t need a category. Pick a measure instead.', true); return; } C.tiles[cur].axis = b.dataset.d; draw(); });
   $$('[data-m]', body).forEach(b => b.onclick = () => { C.tiles[cur].measure = b.dataset.m; draw(); });
-  $$('.slicer button', body).forEach(b => b.onclick = () => { C.slicer = b.dataset.r; draw(); });
+  $$('.slicer button[data-r]', body).forEach(b => b.onclick = () => { C.slicer = b.dataset.r; draw(); }); $$('.slicer button[data-y]', body).forEach(b => b.onclick = () => { C.year = b.dataset.y === 'All' ? null : +b.dataset.y; draw(); });
   draw();
-  return { check: () => st.check(C), solve: () => { const s = JSON.parse(JSON.stringify(st.solution)); C.tiles = C.tiles.map((t, i) => s.tiles[i] || t); C.slicer = s.slicer; draw(); }, hint: 'Click a tile, then pick a visual type, a category and a measure on the right.' };
+  return { check: () => st.check(C), solve: () => { const s = JSON.parse(JSON.stringify(st.solution)); C.tiles = C.tiles.map((t, i) => s.tiles[i] || t); C.slicer = s.slicer; C.year = s.year || null; draw(); }, hint: 'Click a tile, then pick a visual type, a category and a measure on the right.' };
 };
 
 // ===================================================================== LESSON PLAYER
@@ -454,7 +502,7 @@ function viewHome(){
     <div class="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" class="bg"/><circle cx="50" cy="50" r="40" class="fg" style="stroke-dasharray:${C};stroke-dashoffset:${C*(1-pct)}"/></svg><div><b>${S.day.steps}/${S.goal}</b><span>today's steps</span></div><select id="goalSel" title="Daily goal">${[4,8,12,20].map(g => `<option value="${g}" ${g === S.goal ? 'selected' : ''}>${g === 4 ? 'Low-energy day: 4' : g === 8 ? 'Normal day: 8' : g === 12 ? 'Strong day: 12' : 'Beast mode: 20'}</option>`).join('')}</select></div></div>
   <div class="tracks">${TRACKS.map(trackCard).join('')}</div>
   <div class="card"><h2>🎮 Brain-break games</h2><p class="muted">A new one unlocks every 2 lessons. Each takes about 2 minutes, a fun reward that won't swallow your evening.</p><div class="games">${GAMES.map(g => { const un = gameUnlocked(g); return `<a class="game ${un ? '' : 'lk'} ${S.games[g.id] ? 'won' : ''}" href="${un ? '#g-' + g.id : '#home'}"><span class="gi">${S.games[g.id] ? '🏆' : un ? '🎁' : '🔒'}</span><b>${esc(g.title)}</b><span class="small muted">${un ? (g.track === 'excel' ? 'Excel' : 'Power BI') + ' reward' : `after ${g.track === 'excel' ? 'Excel' : 'Power BI'} lesson ${g.after}`}</span></a>`; }).join('')}</div></div>
-  <div class="two"><div class="card"><h2>📦 Practice files</h2><p class="muted">For real hands-on practice in Excel and Power BI Desktop.</p><div class="col"><a class="btn ghost" href="practice/Lumi_Excel_Practice.xlsx" target="_blank" rel="noopener">📗 Excel practice workbook</a><a class="btn ghost" href="practice/LumiBoba_PowerBI_Data.xlsx" target="_blank" rel="noopener">📊 Power BI dataset (4 tables)</a><a class="btn ghost" href="practice/Messy_Customers.csv" target="_blank" rel="noopener">🧹 Messy_Customers.csv</a></div></div>
+  <div class="two"><div class="card"><h2>📦 Practice files</h2><p class="muted">For real hands-on practice in Excel and Power BI Desktop.</p><div class="col"><a class="btn ghost" href="practice/Lumi_Excel_Practice.xlsx" target="_blank" rel="noopener">📗 Excel practice workbook</a><a class="btn ghost" href="practice/LumiBoba_PowerBI_Data.xlsx" target="_blank" rel="noopener">📊 Power BI dataset (4 tables)</a><a class="btn ghost" href="practice/Messy_Customers.csv" target="_blank" rel="noopener">🧹 Messy_Customers.csv</a><div class="small muted">Plus Budget_Wide.csv, Orders_Q1.csv and Orders_Q2.csv for Power Query Pro (in the <code>practice</code> folder).</div></div></div>
   <div class="card"><h2>🧠 Built for focus</h2><ul class="feat"><li><b>One thing per screen.</b> No walls of text.</li><li><b>⏱️ Focus timer</b> (${S.set.mins} min) with guided breaks.</li><li><b>📝 Parking lot</b> for stray thoughts.</li><li><b>🔊 Read aloud</b> and calm mode in ⚙️.</li><li><b>Resume exactly</b> where you stopped.</li></ul><button class="btn ghost small" id="setBtn2">⚙️ Adjust settings</button></div></div>
   </section>`;
 }

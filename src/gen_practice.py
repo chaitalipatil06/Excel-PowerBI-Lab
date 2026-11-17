@@ -91,6 +91,59 @@ widths(ws,[9,12,7,8,11,9,20,10,6,10])
 ws2=wb.create_sheet('8 Pivot Tasks'); 
 for i,l in enumerate(["Mini project (use the '8 Data' sheet):","1. Insert → PivotTable → Region in Rows, Sum of Revenue in Values.","2. Add Quarter to Columns.","3. Insert → PivotChart → Line, with Month on the axis.","4. PivotTable Analyze → Insert Slicer → Category.","5. Give it a title that states the insight, e.g. 'East and West drive 70% of revenue'."],1): ws2.cell(i,1,l).font=B if i==1 else Font(size=12)
 widths(ws2,[90])
+
+# 9 Dates
+ws=wb.create_sheet('9 Dates'); ws['A1']='Tasks: C4:C7 days to ship (=B4-A4). D4:D7 month-end due (=EOMONTH(A4,0)). E4:E7 working days (=NETWORKDAYS(A4,B4)). F4:F7 label =TEXT(A4,"mmm yyyy").'; ws['A1'].font=B
+hdr(ws,3,['Order date','Ship date','Days','Month end','Work days','Label'])
+import datetime as _d
+for i,(a,b_) in enumerate([('2025-03-03','2025-03-07'),('2025-03-10','2025-03-18'),('2025-03-14','2025-03-17'),('2025-03-20','2025-04-01')],4):
+    ws.cell(i,1,_d.date.fromisoformat(a)).number_format='yyyy-mm-dd'; ws.cell(i,2,_d.date.fromisoformat(b_)).number_format='yyyy-mm-dd'
+    for c in 'CDEF': task(ws,f'{c}{i}')
+    ws[f'D{i}'].number_format='yyyy-mm-dd'
+    A+=[('9 Dates',f'C{i}',f'=B{i}-A{i}'),('9 Dates',f'D{i}',f'=EOMONTH(A{i},0)'),('9 Dates',f'E{i}',f'=NETWORKDAYS(A{i},B{i})'),('9 Dates',f'F{i}',f'=TEXT(A{i},"mmm yyyy")')]
+hdr(ws,10,['Name','Hire date','Years of service'])
+for i,(n,h_) in enumerate([('Maya','2016-03-01'),('Aisha','2020-01-10'),('Grace','2023-02-14')],11):
+    ws.cell(i,1,n); ws.cell(i,2,_d.date.fromisoformat(h_)).number_format='yyyy-mm-dd'; task(ws,f'C{i}'); A.append(('9 Dates',f'C{i}',f'=DATEDIF(B{i},DATE(2025,12,31),"y")'))
+widths(ws,[13,13,8,13,10,12])
+# 10 Dynamic Arrays
+ws=wb.create_sheet('10 Dynamic Arrays'); ws['A1']='Excel 365 tasks: F4 =UNIQUE(B4:B11). H4 =FILTER(A4:C11,B4:B11="West"). L4 =SORT(FILTER(A4:C11,C4:C11>=600),3,-1). F15 =SUMPRODUCT(B16:B20,C16:C20).'; ws['A1'].font=B
+hdr(ws,3,['Rep','Region','Sales'])
+for i,r in enumerate([['Aisha','West',820],['Ben','East',640],['Chloe','West',910],['Dev','South',450],['Ema','East',700],['Finn','Midwest',530],['Gia','West',610],['Hao','South',380]],4):
+    for j,v in enumerate(r,1): ws.cell(i,j,v)
+for ref,f in [('F4','=UNIQUE(B4:B11)'),('H4','=FILTER(A4:C11,B4:B11="West")'),('L4','=SORT(FILTER(A4:C11,C4:C11>=600),3,-1)')]: task(ws,ref); A.append(('10 Dynamic Arrays',ref,f))
+hdr(ws,15,['Product','Cups','Price']); ws['E15']='Total revenue'; task(ws,'F15'); A.append(('10 Dynamic Arrays','F15','=SUMPRODUCT(B16:B20,C16:C20)'))
+for i,r in enumerate([['Classic Milk Tea',40,5.5],['Taro Milk Tea',25,6],['Brown Sugar Boba',32,6.5],['Mango Fruit Tea',18,5.75],['Mochi Donut',22,3.5]],16):
+    for j,v in enumerate(r,1): ws.cell(i,j,v)
+widths(ws,[18,10,8,3,12,10,3,10,10,8,3,10,10,8])
+# 11 What-If
+ws=wb.create_sheet('11 What-If'); ws['A1']='Tasks: 1) Name cell B3 "TaxRate" (Name Box) and fill D6:D8 with =C6*TaxRate. 2) Data → What-If → Goal Seek: set B15 to 1500 by changing B11. 3) Make B4 a dropdown (Data Validation → List: West,East,South,Midwest).'; ws['A1'].font=B
+ws['A3']='Tax rate'; ws['B3']=0.08; ws['A4']='Region'; ws['B4']='West'; task(ws,'B4')
+hdr(ws,5,['','Product','Revenue','Tax'])
+for i,(p_,v) in enumerate([('Classic Milk Tea',220),('Taro Milk Tea',150),('Brown Sugar Boba',208)],6):
+    ws.cell(i,2,p_); ws.cell(i,3,v); task(ws,f'D{i}'); A.append(('11 What-If',f'D{i}',f'=C{i}*TaxRate (after naming B3 "TaxRate")'))
+for i,(l,v) in enumerate([('Price',4),('Cups sold',400),('Cost per cup',2.1),('Fixed costs',900)],11): ws.cell(i,1,l).font=B; ws.cell(i,2,v)
+ws['A15']='Profit'; ws['A15'].font=B; ws['B15']='=B12*(B11-B13)-B14'; task(ws,'B11'); A.append(('11 What-If','B11','Goal Seek result: 8.1'))
+widths(ws,[14,18,10,10])
+# 12 Dashboard Data (2 years)
+ws=wb.create_sheet('12 Dashboard Data'); ws.append(['OrderID','Date','Year','Month','Quarter','Store','Region','Product','Category','Qty','Revenue'])
+for s_ in D['sales']:
+    c=cal[s_[1]]; st=stores[s_[2]]; p_=prods[s_[3]]
+    ws.append([s_[0],s_[1],c[1],c[3],c[4],st[1],st[3],p_[1],p_[2],s_[4],s_[5]])
+t=Table(displayName='Sales2y',ref=f'A1:K{len(D["sales"])+1}'); t.tableStyleInfo=TableStyleInfo(name='TableStyleMedium4',showRowStripes=True); ws.add_table(t)
+widths(ws,[9,12,6,7,8,11,9,20,10,6,10])
+ws=wb.create_sheet('12 Dashboard Brief')
+for i,l in enumerate(["Build a one-page Excel dashboard from '12 Dashboard Data':","1. KPI cells: Revenue 2025, Revenue 2024, YoY growth % (=(2025-2024)/2024).","2. PivotTable + PivotChart: Revenue by Month (line), Year in Columns.","3. PivotTable + PivotChart: Revenue by Category (column).","4. Insert a Region slicer and a Date timeline; connect them to all pivots (Report Connections).","5. Title that states the insight. Hide gridlines (View tab). Screenshot for your portfolio!"],1): ws.cell(i,1,l).font=B if i==1 else Font(size=12)
+widths(ws,[100])
+# 13 Skills Test
+ws=wb.create_sheet('13 Skills Test'); ws['A1']='20-minute skills test. Yellow cells are tasks. Answers on the Answers sheet. Data: the table below (A4:E19).'; ws['A1'].font=B
+hdr(ws,3,['Order','Rep','Region','Category','Revenue'])
+import random as _r; rr=_r.Random(5); reps=['Aisha','Ben','Chloe','Dev']; regs=['West','East','South','Midwest']; cats=['Milk Tea','Fruit Tea','Snacks']
+for i in range(16):
+    ws.append([i+1, rr.choice(reps), rr.choice(regs), rr.choice(cats), rr.choice([45,60,88,95,120,132,150,210,240])])
+qs=[('Total revenue','=SUM(E4:E19)'),('Average order','=ROUND(AVERAGE(E4:E19),2)'),('West revenue','=SUMIF(C4:C19,"West",E4:E19)'),('East + Snacks revenue','=SUMIFS(E4:E19,C4:C19,"East",D4:D19,"Snacks")'),('Orders over 100','=COUNTIF(E4:E19,">100")'),('Aisha orders in West','=COUNTIFS(B4:B19,"Aisha",C4:C19,"West")'),('Biggest order','=MAX(E4:E19)'),('Rep of biggest order','=INDEX(B4:B19,MATCH(MAX(E4:E19),E4:E19,0))'),('Share of revenue from Milk Tea','=SUMIF(D4:D19,"Milk Tea",E4:E19)/SUM(E4:E19)'),('Unique regions (365)','=UNIQUE(C4:C19)')]
+for i,(l,f) in enumerate(qs,4):
+    ws.cell(i,8,l).font=B; task(ws,f'I{i}'); A.append(('13 Skills Test',f'I{i}',f))
+widths(ws,[7,9,9,11,9,3,3,30,12])
 # Answers
 ws=wb.create_sheet('Answers'); hdr(ws,1,['Sheet','Cell','Formula / answer'])
 for i,(s,c,f) in enumerate(A,2): ws.cell(i,1,s); ws.cell(i,2,c); ws.cell(i,3,"'"+f if f.startswith('=') else f)
@@ -104,6 +157,9 @@ for name,cols,rows in [('Sales',['OrderID','Date','StoreID','ProductID','Qty','R
     t=Table(displayName=name+'Table' if name=='Calendar' else name,ref=f'A1:{get_column_letter(len(cols))}{len(rows)+1}'); t.tableStyleInfo=TableStyleInfo(name='TableStyleMedium2',showRowStripes=True); ws.add_table(t)
     widths(ws,[14]*len(cols))
 wb.save(os.path.join(out,'LumiBoba_PowerBI_Data.xlsx'))
+for fn,key in [('Budget_Wide.csv','wide'),('Orders_Q1.csv','q1'),('Orders_Q2.csv','q2')]:
+    with open(os.path.join(out,fn),'w',newline='') as f:
+        w=csv.writer(f); w.writerow(D['pq'][key]['cols']); w.writerows(D['pq'][key]['rows'])
 with open(os.path.join(out,'Messy_Customers.csv'),'w',newline='') as f:
     w=csv.writer(f); w.writerow(['Customer','Location','Amount','Date']); w.writerows(D['messy'])
 print('ok', len(A),'answers')

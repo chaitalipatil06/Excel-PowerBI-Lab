@@ -18,7 +18,7 @@ with sync_playwright() as p:
                 pg.click(f'.opt[data-i="{L["q"][i]}"]')
             elif t=='order':
                 pg.evaluate("__lab.solveCurrent()")
-            elif t in ('sheet','table','pivot','chart','pq','model','dax','report'):
+            elif t in ('sheet','table','pivot','chart','pq','model','dax','report','calccol','rls'):
                 # first try an empty check: should NOT pass
                 pg.click('#primary'); pg.wait_for_timeout(80)
                 fb=pg.inner_text('#fb')
@@ -26,7 +26,7 @@ with sync_playwright() as p:
                 if (L['id'],t) in [('x2','sheet'),('x5','sheet'),('x8','pivot'),('p2','pq'),('p3','model'),('p5','dax'),('p7','report')] and not os.path.exists(f"{SHOT}/{L['id']}_{t}.png"):
                     pass
                 pg.evaluate("__lab.solveCurrent()"); pg.wait_for_timeout(120)
-                if (L['id'],t) in [('x2','sheet'),('x5','sheet'),('x7','table'),('x8','pivot'),('x8','chart'),('p2','pq'),('p3','model'),('p4','dax'),('p7','report')]:
+                if (L['id'],t) in [('x10','sheet'),('x11','sheet'),('x9','sheet'),('p8','pq'),('p9','dax'),('p10','calccol'),('p11','report'),('p12','rls'),('p13','report'),('p13','dax')]:
                     pg.screenshot(path=f"{SHOT}/{L['id']}_{i}_{t}.png",full_page=True)
                 pg.click('#primary'); pg.wait_for_timeout(120)
                 fb=pg.inner_text('#fb')
