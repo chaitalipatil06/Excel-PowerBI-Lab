@@ -9,9 +9,24 @@ const PBI = (() => {
       Calendar: { cols:['Date','Year','MonthNum','Month','Quarter','Weekday'], rows: D.calendar.map(r => ({Date:r[0], Year:r[1], MonthNum:r[2], Month:r[3], Quarter:r[4], Weekday:r[5]})) }
     };
     const rels = [ {from:'Sales', fk:'ProductID', to:'Products', pk:'ProductID'}, {from:'Sales', fk:'StoreID', to:'Stores', pk:'StoreID'}, {from:'Sales', fk:'Date', to:'Calendar', pk:'Date'} ];
-    // index lookups
-    for(const r of rels){ const idx = new Map(); T[r.to].rows.forEach(x => idx.set(x[r.pk], x)); r.idx = idx; }
-    return { T, rels, measures: {} };
+    return makeModel(T, rels);
+  }
+  function makeModel(T, rels){ for(const r of rels){ const idx = new Map(); T[r.to].rows.forEach(x => idx.set(x[r.pk], x)); r.idx = idx; } return { T, rels, measures: {} }; }
+  const MON3 = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'], DOW3 = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  function calendar(y0, y1){ const rows = []; for(let t = Date.UTC(y0,0,1); t <= Date.UTC(y1,11,31); t += 864e5){ const d = new Date(t); const m = d.getUTCMonth(); rows.push({Date:d.toISOString().slice(0,10), Year:d.getUTCFullYear(), MonthNum:m+1, Month:MON3[m], Quarter:'Q' + (Math.floor(m/3)+1), Weekday:DOW3[d.getUTCDay()]}); } return rows; }
+  // Lumi Health clinic model: Visits & Labs (facts) → Patients, Doctors, Calendar (dimensions)
+  function buildClinic(C){
+    const age = b => { const a = 2025 - +b.slice(0,4); return a < 18 ? 'Child' : a >= 65 ? 'Senior' : 'Adult'; };
+    const T = {
+      Visits: { cols:['VisitID','PatientID','DoctorID','Date','Status','Reason','Fee'], rows: C.appointments.map(r => ({VisitID:r[0], PatientID:r[1], DoctorID:r[2], Date:r[3], Status:r[4], Reason:r[5], Fee:r[6]})) },
+      Patients: { cols:['PatientID','Name','Gender','AgeGroup','City','Insurance'], rows: C.patients.map(r => ({PatientID:r[0], Name:r[1] + ' ' + r[2], Gender:r[3], AgeGroup:age(r[4]), City:r[5], Insurance:r[6] || 'Self-pay'})) },
+      Doctors: { cols:['DoctorID','Doctor','Specialty','VisitFee'], rows: C.doctors.map(r => ({DoctorID:r[0], Doctor:r[1], Specialty:r[2], VisitFee:r[4]})) },
+      Labs: { cols:['ResultID','PatientID','Test','Value','Date'], rows: C.labs.map(r => ({ResultID:r[0], PatientID:r[1], Test:r[2], Value:r[3], Date:r[4]})) },
+      Calendar: { cols:['Date','Year','MonthNum','Month','Quarter','Weekday'], rows: calendar(2025, 2025) }
+    };
+    const rels = [ {from:'Visits', fk:'PatientID', to:'Patients', pk:'PatientID'}, {from:'Visits', fk:'DoctorID', to:'Doctors', pk:'DoctorID'}, {from:'Visits', fk:'Date', to:'Calendar', pk:'Date'},
+                   {from:'Labs', fk:'PatientID', to:'Patients', pk:'PatientID'}, {from:'Labs', fk:'Date', to:'Calendar', pk:'Date'} ];
+    return makeModel(T, rels);
   }
   // is a row of table `tn` visible under filters?
   function related(M, tn, row, target){ if(tn === target) return row; const r = M.rels.find(r => r.from === tn && r.to === target); return r ? r.idx.get(row[r.fk]) : undefined; }
@@ -179,7 +194,7 @@ const PBI = (() => {
   }
   function defineMeasure(M, text){
     const m = /^\s*([^=]+?)\s*=\s*([\s\S]+)$/.exec(text); if(!m) throw new DErr('Write it as: Measure Name = EXPRESSION');
-    const name = m[1].replace(/^\[|\]$/g, '').trim(); if(!/^[A-Za-z][\w %]*$/.test(name)) throw new DErr('Measure names should start with a letter.');
+    const name = m[1].replace(/^\[|\]$/g, '').trim(); if(!/^[A-Za-z][\w %\-]*$/.test(name)) throw new DErr('Measure names should start with a letter.');
     const ast = parse(m[2]); return { name, ast, text };
   }
   function calcColumn(M, tn, text){ const m = /^\s*(?:'?([A-Za-z]+)'?\s*\[\s*([^\]]+)\]|([A-Za-z][\w ]*?))\s*=\s*([\s\S]+)$/.exec(text); if(!m) throw new DErr('Write it as: ColumnName = EXPRESSION');
@@ -230,6 +245,6 @@ const PBI = (() => {
     },
     run(start, steps){ let s = { rows:start.rows, cols:start.cols }; for(const st of steps) s = PQ.apply(s.rows, s.cols, st); return s; }
   };
-  return { buildModel, visible, parse, evalMeasure, defineMeasure, groupBy, calcColumn, rowFilter, PQ, DErr };
+  return { buildModel, buildClinic, visible, parse, evalMeasure, defineMeasure, groupBy, calcColumn, rowFilter, PQ, DErr };
 })();
 if(typeof module !== 'undefined') module.exports = PBI;

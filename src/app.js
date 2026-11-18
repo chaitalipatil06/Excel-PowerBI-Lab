@@ -18,7 +18,9 @@ const save = () => { try{ localStorage.setItem(KEY, JSON.stringify(S)); }catch(e
 function bumpDay(){ const d = today(); if(S.day.date !== d) S.day = {date:d, steps:0};
   if(S.streak.last !== d){ const y = new Date(Date.now() - 864e5).toISOString().slice(0,10); S.streak.count = S.streak.last === y ? S.streak.count + 1 : 1; S.streak.last = d; } }
 const allLessons = () => TRACKS.flatMap(t => t.lessons.map((l, i) => ({...l, track:t, idx:i})));
-const findLesson = id => allLessons().find(l => l.id === id);
+const findLesson = id => { const m = /^(\w+?)_(p|c)$/.exec(id); if(m){ const L = allLessons().find(l => l.id === m[1]); if(!L) return null;
+    const steps = m[2] === 'p' ? (PRACTICE_SETS[L.id] || []) : (CHECKS[L.id] || []); return {...L, id, base:L, mode: m[2] === 'p' ? 'practice' : 'check', title: (m[2] === 'p' ? '🏋️ Practice · ' : '🎓 Skills Check · ') + L.title, steps}; }
+  return allLessons().find(l => l.id === id); };
 const lessonUnlocked = l => l.idx === 0 || !!S.done[l.track.lessons[l.idx-1].id];
 const trackDone = t => t.lessons.filter(l => S.done[l.id]).length;
 const gameUnlocked = g => { const t = TRACKS.find(x => x.id === g.track); return t.lessons.slice(0, g.after).every(l => S.done[l.id]); };
@@ -34,6 +36,18 @@ STD_MEASURES.concat(typeof EXTRA_MEASURES !== 'undefined' ? EXTRA_MEASURES : [])
 const FLAT = M.T.Sales.rows.map(r => { const p = M.rels[0].idx.get(r.ProductID), s = M.rels[1].idx.get(r.StoreID), c = M.rels[2].idx.get(r.Date);
   return { OrderID:r.OrderID, Date:r.Date, Year:c.Year, Month:c.Month, Quarter:c.Quarter, Store:s.Store, Region:s.Region, Product:p.Product, Category:p.Category, Qty:r.Qty, Revenue:r.Revenue }; });
 const FLATX = FLAT.filter(r => r.Year === 2025); // Excel pivots/charts use one year (2025)
+const MC = PBI.buildClinic(DATA.clinic);
+const CLINIC_MEASURES = ['Total Visits = COUNTROWS(Visits)','Completed Visits = CALCULATE([Total Visits], Visits[Status] = "completed")','Revenue = SUM(Visits[Fee])','No-show % = DIVIDE(CALCULATE([Total Visits], Visits[Status] = "no-show"), [Total Visits])','Patients Seen = DISTINCTCOUNT(Visits[PatientID])','Avg Fee = DIVIDE([Revenue], [Completed Visits])','Avg HbA1c = CALCULATE(AVERAGE(Labs[Value]), Labs[Test] = "HbA1c")'];
+CLINIC_MEASURES.forEach(t => { const m = PBI.defineMeasure(MC, t); MC.measures[m.name] = m; });
+const CFLAT = MC.T.Visits.rows.map(v => { const d = MC.rels[1].idx.get(v.DoctorID), p = MC.rels[0].idx.get(v.PatientID), c = MC.rels[2].idx.get(v.Date);
+  return { VisitID:v.VisitID, Month:c.Month, Quarter:c.Quarter, Weekday:c.Weekday, Specialty:d.Specialty, Doctor:d.Doctor, City:p.City, AgeGroup:p.AgeGroup, Insurance:p.Insurance, Status:v.Status, Reason:v.Reason, Fee:v.Fee || 0 }; });
+const SRC = {
+  boba: { rows:FLATX, fields:['Region','Store','Category','Product','Month','Quarter','Revenue','Qty','OrderID'], axes:['Region','Category','Month','Store'], money:['Revenue'], label:'2025 boba orders' },
+  clinic: { rows:CFLAT, fields:['Specialty','Doctor','City','AgeGroup','Insurance','Status','Reason','Month','Quarter','Fee','VisitID'], axes:['Specialty','City','Month','Status','AgeGroup','Weekday'], money:['Fee'], label:'Lumi Health 2025 visits' } };
+const MODELS = {
+  boba: { M, fact:'Sales', dims:['Stores.Region','Stores.Store','Products.Category','Products.Product','Calendar.Month','Calendar.Quarter'], slicer:{t:'Stores', c:'Region', label:'Region', vals:['East','West','Midwest','South']} },
+  clinic: { M:MC, fact:'Visits', dims:['Doctors.Specialty','Doctors.Doctor','Patients.City','Patients.AgeGroup','Patients.Insurance','Visits.Status','Visits.Reason','Calendar.Month','Calendar.Quarter','Calendar.Weekday'], slicer:{t:'Patients', c:'City', label:'City', vals:['Springfield','Riverside','Lakeview','Hillcrest']} } };
+const buildM = k => k === 'clinic' ? PBI.buildClinic(DATA.clinic) : PBI.buildModel(DATA);
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const sortKeys = (keys, field) => field === 'Month' ? keys.sort((a,b) => MONTHS.indexOf(a) - MONTHS.indexOf(b)) : keys.sort();
 
@@ -108,10 +122,17 @@ R.learn = (st, body) => {
   body.innerHTML = `<h2>${st.title}</h2>${st.visual && VIS[st.visual] ? `<div class="visual">${VIS[st.visual]}</div>` : ''}<p class="lead">${st.text}</p>${st.tip ? `<div class="tip">💡 ${st.tip}</div>` : ''}`;
   return { ready:true, speakText: st.title + '. ' + st.text + (st.tip ? '. Tip: ' + st.tip : '') };
 };
+R.story = (st, body) => {
+  body.innerHTML = `<div class="story-tag">📖 THE STORY · LUMI HEALTH CLINIC</div><div class="story-ask"><b>${st.cast}</b><p>${st.ask}</p></div>
+    <div class="story-grid"><div class="sbox"><h3>🧠 Think of it like this</h3><p>${st.analogy}</p></div><div class="sbox"><h3>⏰ When you'll use it</h3><ul>${st.when.map(w => `<li>${w}</li>`).join('')}</ul></div></div>
+    ${st.how ? `<div class="sbox" style="margin-top:12px"><h3>🛠️ In ${st.tool || 'Excel'} it looks like</h3><p>${st.how}</p></div>` : ''}`;
+  return { ready:true, speakText: st.cast + '. ' + st.ask + '. ' + st.analogy };
+};
 R.quiz = (st, body, api) => {
   body.innerHTML = `<h2>Quick check</h2><p class="lead">${esc(st.q)}</p><div class="opts">${st.opts.map((o, i) => `<button class="opt" data-i="${i}"><span class="k">${'ABCD'[i]}</span>${esc(o)}</button>`).join('')}</div><div class="why"></div>`;
   $$('.opt', body).forEach(b => b.onclick = () => { if(body.dataset.ok) return; const i = +b.dataset.i;
     if(i === st.a){ b.classList.add('right'); body.dataset.ok = 1; $('.why', body).innerHTML = '✅ ' + esc(st.why); api.pass(); }
+    else if(api.mode === 'check'){ b.classList.add('wrong'); $$('.opt', body)[st.a].classList.add('right'); body.dataset.ok = 1; $('.why', body).innerHTML = '❌ The highlighted answer is right. ' + esc(st.why || ''); api.pass(false, 0); }
     else { b.classList.remove('wrong'); void b.offsetWidth; b.classList.add('wrong'); $('.why', body).textContent = 'Not quite. Have another go! 💪'; } });
   return { keys: k => { const i = 'abcd'.indexOf(k.toLowerCase()); if(i >= 0 && st.opts[i]) $$('.opt', body)[i].click(); }, speakText: st.q + '. ' + st.opts.map((o, i) => 'ABCD'[i] + ': ' + o).join('. ') };
 };
@@ -192,21 +213,24 @@ R.sheet = (st, body, api) => {
 // ---------- Excel table: sort / filter / conditional formatting ----------
 const ORDERS = [[1001,'Downtown','West','Classic Milk Tea',620],[1002,'Harbor','East','Mochi Donut',140],[1003,'Sunset','West','Mango Fruit Tea',385],[1004,'Lakeside','Midwest','Taro Milk Tea',510],[1005,'Uptown','East','Brown Sugar Boba',760],[1006,'Riverside','South','Matcha Latte',230],[1007,'Downtown','West','Taro Milk Tea',905],[1008,'Harbor','East','Classic Milk Tea',95],[1009,'Sunset','West','Popcorn Chicken',455],[1010,'Lakeside','Midwest','Mango Fruit Tea',300]];
 const OCOLS = ['Order','Store','Region','Product','Revenue'];
+const CVCOLS = ['Visit','Patient','Specialty','Status','Fee'];
+const CVIS = [[101,'Maria Lopez','Cardiology','completed',280],[102,'James Smith','General Practice','no-show',0],[103,'Aiko Tanaka','Pediatrics','completed',160],[104,'Omar Haddad','Orthopedics','completed',240],[105,'Linda Brown','Cardiology','cancelled',0],[106,'Raj Patel','Dermatology','completed',200],[107,'Grace Kim','Endocrinology','completed',220],[108,'Carlos Garcia','General Practice','completed',150],[109,'Fatima Khan','Neurology','no-show',0],[110,'Peter Nguyen','Cardiology','completed',280]];
 R.table = (st, body, api) => {
+  const ORDERS_ = st.src === 'clinic' ? CVIS : ORDERS, OCOLS_ = st.src === 'clinic' ? CVCOLS : OCOLS, MONEY = st.src === 'clinic' ? 'Fee' : 'Revenue';
   let T = {sort:null, filter:{}, cf:null};
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="tt-tools"><button class="tb" id="cfBtn">🎨 Conditional formatting</button><button class="tb" id="clr">✕ Clear all</button></div><div class="cfpanel" hidden></div><div class="tt-wrap"></div>`;
   const wrap = $('.tt-wrap', body);
   function draw(){
-    let rows = ORDERS.map(r => Object.fromEntries(OCOLS.map((c, i) => [c, r[i]])));
+    let rows = ORDERS_.map(r => Object.fromEntries(OCOLS_.map((c, i) => [c, r[i]])));
     for(const c in T.filter) rows = rows.filter(r => T.filter[c].includes(String(r[c])));
     if(T.sort){ const {col, dir} = T.sort; rows.sort((a, b) => (a[col] < b[col] ? -1 : a[col] > b[col] ? 1 : 0) * (dir === 'asc' ? 1 : -1)); }
     const hit = (r) => { if(!T.cf) return false; const v = r[T.cf.col], x = +T.cf.val; return T.cf.op === '>' ? v > x : T.cf.op === '<' ? v < x : String(v) === String(T.cf.val); };
-    wrap.innerHTML = `<table class="tt"><tr>${OCOLS.map(c => `<th><button class="hdrbtn" data-c="${c}">${c} ${T.filter[c] ? '⏷' : '▾'}${T.sort && T.sort.col === c ? (T.sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr>${rows.map(r => `<tr>${OCOLS.map(c => `<td class="${typeof r[c] === 'number' ? 'num' : ''}" style="${T.cf && T.cf.col === c && hit(r) ? `background:${T.cf.color};font-weight:800` : ''}">${c === 'Revenue' ? '$' + r[c] : esc(r[c])}</td>`).join('')}</tr>`).join('')}</table><div class="small muted">${rows.length} of ${ORDERS.length} rows shown</div>`;
+    wrap.innerHTML = `<table class="tt"><tr>${OCOLS_.map(c => `<th><button class="hdrbtn" data-c="${c}">${c} ${T.filter[c] ? '⏷' : '▾'}${T.sort && T.sort.col === c ? (T.sort.dir === 'asc' ? ' ↑' : ' ↓') : ''}</button></th>`).join('')}</tr>${rows.map(r => `<tr>${OCOLS_.map(c => `<td class="${typeof r[c] === 'number' ? 'num' : ''}" style="${T.cf && T.cf.col === c && hit(r) ? `background:${T.cf.color};font-weight:800` : ''}">${c === MONEY ? '$' + r[c] : esc(r[c])}</td>`).join('')}</tr>`).join('')}</table><div class="small muted">${rows.length} of ${ORDERS_.length} rows shown</div>`;
     $$('.hdrbtn', wrap).forEach(b => b.onclick = e => menu(b.dataset.c, b));
   }
   function menu(c, btn){
     $$('.colmenu').forEach(m => m.remove());
-    const vals = [...new Set(ORDERS.map(r => String(r[OCOLS.indexOf(c)])))].sort(); const cur = T.filter[c] || vals; const isNum = c === 'Revenue' || c === 'Order';
+    const vals = [...new Set(ORDERS_.map(r => String(r[OCOLS_.indexOf(c)])))].sort(); const cur = T.filter[c] || vals; const isNum = typeof ORDERS_[0][OCOLS_.indexOf(c)] === 'number';
     const m = h('div', {class:'colmenu'}, `<button data-s="asc">${isNum ? 'Smallest → Largest' : 'A → Z'}</button><button data-s="desc">${isNum ? 'Largest → Smallest' : 'Z → A'}</button><hr><div class="fl">${vals.map(v => `<label><input type="checkbox" value="${esc(v)}" ${cur.includes(v) ? 'checked' : ''}> ${esc(v)}</label>`).join('')}</div><div class="row"><button class="btn small" data-ok>Apply filter</button><button class="btn ghost small" data-x>Close</button></div>`);
     btn.closest('th').appendChild(m);
     $$('[data-s]', m).forEach(b => b.onclick = () => { T.sort = {col:c, dir:b.dataset.s}; m.remove(); draw(); });
@@ -214,7 +238,7 @@ R.table = (st, body, api) => {
     $('[data-x]', m).onclick = () => m.remove();
   }
   $('#cfBtn', body).onclick = () => { const p = $('.cfpanel', body); p.hidden = !p.hidden;
-    p.innerHTML = `<b>Highlight cells where</b> <select id="cfc">${OCOLS.map(c => `<option ${c === 'Revenue' ? 'selected' : ''}>${c}</option>`).join('')}</select> <select id="cfo"><option value=">">is greater than</option><option value="<">is less than</option><option value="=">equals</option></select> <input id="cfv" class="smallin" placeholder="value"> ${PASTEL.slice(0,4).map((c, i) => `<button class="sw ${i ? '' : 'on'}" data-c="${c}" style="background:${c}"></button>`).join('')} <button class="btn small" id="cfgo">Apply</button>`;
+    p.innerHTML = `<b>Highlight cells where</b> <select id="cfc">${OCOLS_.map(c => `<option ${c === MONEY ? 'selected' : ''}>${c}</option>`).join('')}</select> <select id="cfo"><option value=">">is greater than</option><option value="<">is less than</option><option value="=">equals</option></select> <input id="cfv" class="smallin" placeholder="value"> ${PASTEL.slice(0,4).map((c, i) => `<button class="sw ${i ? '' : 'on'}" data-c="${c}" style="background:${c}"></button>`).join('')} <button class="btn small" id="cfgo">Apply</button>`;
     let color = PASTEL[0]; $$('.sw', p).forEach(s => s.onclick = () => { $$('.sw', p).forEach(x => x.classList.remove('on')); s.classList.add('on'); color = s.dataset.c; });
     $('#cfgo', p).onclick = () => { T.cf = {col:$('#cfc', p).value, op:$('#cfo', p).value, val:$('#cfv', p).value, color}; p.hidden = true; draw(); }; };
   $('#clr', body).onclick = () => { T = {sort:null, filter:{}, cf:null}; draw(); };
@@ -225,8 +249,9 @@ R.table = (st, body, api) => {
 // ---------- Excel PivotTable ----------
 const PFIELDS = ['Region','Store','Category','Product','Month','Quarter','Revenue','Qty','OrderID'];
 R.pivot = (st, body, api) => {
+  const D_ = SRC[st.src || 'boba'], FLATX = D_.rows, PFIELDS = D_.fields;
   let C = {rows:[], cols:[], val:null, agg:'Sum'};
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="small muted" style="margin-top:6px">Data: 2025 orders (${FLATX.length} rows)</div><div class="pv"><div class="pv-fields"><b>PivotTable Fields</b>${PFIELDS.map(f => `<div class="pf"><span>${f}</span><span class="pfb"><button data-f="${f}" data-z="rows" title="Add to Rows">R</button><button data-f="${f}" data-z="cols" title="Add to Columns">C</button><button data-f="${f}" data-z="val" title="Add to Values">Σ</button></span></div>`).join('')}<div class="small muted">R = Rows · C = Columns · Σ = Values</div></div><div class="pv-zones"></div><div class="pv-out"></div></div>`;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="small muted" style="margin-top:6px">Data: ${D_.label} (${FLATX.length} rows)</div><div class="pv"><div class="pv-fields"><b>PivotTable Fields</b>${PFIELDS.map(f => `<div class="pf"><span>${f}</span><span class="pfb"><button data-f="${f}" data-z="rows" title="Add to Rows">R</button><button data-f="${f}" data-z="cols" title="Add to Columns">C</button><button data-f="${f}" data-z="val" title="Add to Values">Σ</button></span></div>`).join('')}<div class="small muted">R = Rows · C = Columns · Σ = Values</div></div><div class="pv-zones"></div><div class="pv-out"></div></div>`;
   function draw(){
     const z = $('.pv-zones', body);
     const chip = (f, zone) => `<span class="chip">${f}<button data-rm="${zone}" data-f="${f}">✕</button></span>`;
@@ -239,24 +264,25 @@ R.pivot = (st, body, api) => {
     if(!C.val || !C.rows.length) return '<div class="empty">Add a field to <b>Rows</b> and one to <b>Values</b> to see your pivot.</div>';
     const rf = C.rows[0], cf = C.cols[0]; const rk = sortKeys([...new Set(FLATX.map(r => r[rf]))], rf), ck = cf ? sortKeys([...new Set(FLATX.map(r => r[cf]))], cf) : [null];
     const agg = rows => { const v = rows.map(r => r[C.val]); if(C.agg === 'Count') return v.length; const n = v.filter(x => typeof x === 'number'); const s = n.reduce((a, b) => a + b, 0); return C.agg === 'Sum' ? s : n.length ? s / n.length : 0; };
-    const f = v => C.agg === 'Count' ? v.toLocaleString() : C.val === 'Revenue' ? '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : (+v.toFixed(2)).toLocaleString();
+    const f = v => C.agg === 'Count' ? v.toLocaleString() : D_.money.includes(C.val) ? '$' + v.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}) : (+v.toFixed(2)).toLocaleString();
     let html = `<table class="pt"><tr><th>${rf}</th>${ck.map(k => `<th>${k ?? `${C.agg} of ${C.val}`}</th>`).join('')}${cf ? '<th>Grand Total</th>' : ''}</tr>`;
     rk.forEach(k => { const rr = FLATX.filter(r => r[rf] === k); html += `<tr><td>${esc(k)}</td>${ck.map(c => `<td class="num">${f(agg(c === null ? rr : rr.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num tot">${f(agg(rr))}</td>` : ''}</tr>`; });
     html += `<tr class="gt"><td>Grand Total</td>${ck.map(c => `<td class="num">${f(agg(c === null ? FLATX : FLATX.filter(r => r[cf] === c)))}</td>`).join('')}${cf ? `<td class="num">${f(agg(FLATX))}</td>` : ''}</tr></table>`;
     return html;
   }
   $$('.pfb button', body).forEach(b => b.onclick = () => { const f = b.dataset.f, z = b.dataset.z; C.rows = C.rows.filter(x => x !== f); C.cols = C.cols.filter(x => x !== f); if(C.val === f) C.val = null;
-    if(z === 'val'){ C.val = f; C.agg = ['Revenue','Qty'].includes(f) ? 'Sum' : 'Count'; } else C[z] = [f]; draw(); });
+    if(z === 'val'){ C.val = f; C.agg = ['Revenue','Qty','Fee'].includes(f) ? 'Sum' : 'Count'; } else C[z] = [f]; draw(); });
   draw();
   return { check: () => st.check(C), solve: () => { C = JSON.parse(JSON.stringify(st.solution)); draw(); }, hint: 'Use the R / C / Σ buttons next to each field.' };
 };
 // ---------- Excel chart ----------
 R.chart = (st, body, api) => {
-  let C = {type:'column', axis:'Region'};
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="chartbox"><div class="ch-tools"><div><b>Chart type</b><div class="seg" id="ct">${[['column','📊 Column'],['bar','📶 Bar'],['line','📈 Line'],['pie','🥧 Pie']].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div><div><b>Axis (categories)</b><div class="seg" id="ca">${['Region','Category','Month','Store'].map(v => `<button data-v="${v}">${v}</button>`).join('')}</div></div><div class="small muted">Values: Sum of Revenue</div></div><div class="ch-out"></div></div>`;
+  const D_ = SRC[st.src || 'boba'], FLATX = D_.rows, vf = st.src === 'clinic' ? (st.value || 'Visits') : 'Revenue';
+  let C = {type:'column', axis:D_.axes[0]};
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="chartbox"><div class="ch-tools"><div><b>Chart type</b><div class="seg" id="ct">${[['column','📊 Column'],['bar','📶 Bar'],['line','📈 Line'],['pie','🥧 Pie']].map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div></div><div><b>Axis (categories)</b><div class="seg" id="ca">${D_.axes.map(v => `<button data-v="${v}">${v}</button>`).join('')}</div></div><div class="small muted">Values: ${vf === 'Visits' ? 'Count of visits' : 'Sum of ' + vf}</div></div><div class="ch-out"></div></div>`;
   function draw(){ $$('#ct button', body).forEach(b => b.classList.toggle('on', b.dataset.v === C.type)); $$('#ca button', body).forEach(b => b.classList.toggle('on', b.dataset.v === C.axis));
-    const keys = sortKeys([...new Set(FLATX.map(r => r[C.axis]))], C.axis); const data = keys.map(k => ({key:k, value:FLATX.filter(r => r[C.axis] === k).reduce((s, r) => s + r.Revenue, 0)}));
-    $('.ch-out', body).innerHTML = chartSVG(C.type, data); }
+    const keys = sortKeys([...new Set(FLATX.map(r => r[C.axis]))], C.axis); const data = keys.map(k => ({key:k, value: vf === 'Visits' ? FLATX.filter(r => r[C.axis] === k).length : FLATX.filter(r => r[C.axis] === k).reduce((s, r) => s + r[vf], 0)}));
+    $('.ch-out', body).innerHTML = chartSVG(C.type, data, {money: vf !== 'Visits'}); }
   $$('#ct button', body).forEach(b => b.onclick = () => { C.type = b.dataset.v; draw(); }); $$('#ca button', body).forEach(b => b.onclick = () => { C.axis = b.dataset.v; draw(); });
   draw(); return { check: () => st.check(C), solve: () => { C = {...st.solution}; draw(); }, hint: 'Time on the axis → a line chart shows the trend best.' };
 };
@@ -272,17 +298,18 @@ const PQ_GOALS = {
   split:['Location split into City + Region', s => !s.cols.some(c => c.name === 'Location') && s.cols.length >= 5]
 };
 const mkPQ = d => ({ cols: d.cols.map(c => ({name:c, type: typeof d.rows[0][d.cols.indexOf(c)] === 'number' ? 'number' : 'text'})), rows: d.rows.map(r => Object.fromEntries(d.cols.map((c, i) => [c, r[i]]))) });
-const PQ_BTN = { unpivot:'<button data-op="unpivot" data-c>↕ Unpivot other columns</button>', rename:'<span class="rn"><input id="rnTo" class="smallin" placeholder="new name"><button data-op="rename" data-c>✏️ Rename</button></span>', append:'<button data-op="append">➕ Append Q2 table</button>', merge:'<button data-op="merge">🔗 Merge with Stores (on StoreID)</button>', group:'<button data-op="group" data-c>Σ Group By → Sum of Amount</button>' };
+const PQ_BTN = st => ({ unpivot:'<button data-op="unpivot" data-c>↕ Unpivot other columns</button>', rename:'<span class="rn"><input id="rnTo" class="smallin" placeholder="new name"><button data-op="rename" data-c>✏️ Rename</button></span>', append:`<button data-op="append">➕ Append ${st.extraLabel || 'Q2 table'}</button>`, merge:`<button data-op="merge">🔗 Merge with ${st.lkLabel || 'Stores (on StoreID)'}</button>`, group:`<button data-op="group" data-c>Σ Group By → Sum of ${st.agg || 'Amount'}</button>`,
+  removeBlank:'<button data-op="removeBlank">🧹 Remove blank rows</button>', removeDup:'<button data-op="removeDup">👯 Remove duplicates</button>', trim:'<button data-op="trim" data-c>✂️ Trim</button>', proper:'<button data-op="proper" data-c>Aa Capitalize Each Word</button>', type:'<button data-op="type" data-to="number" data-c>123 To Number</button>' });
 R.pq = (st, body, api) => {
   const START = st.data ? mkPQ(DATA.pq[st.data]) : PQ_START;
-  const enrich = s => s.op === 'append' ? {...s, data:DATA.pq[st.extra]} : s.op === 'merge' ? {...s, data:DATA.pq.storelk, key:'StoreID', take:'Region'} : s.op === 'group' ? {...s, agg:'Amount'} : s;
+  const enrich = s => s.op === 'append' ? {...s, data:DATA.pq[st.extra]} : s.op === 'merge' ? {...s, data:DATA.pq[st.lk || 'storelk'], key:st.key || 'StoreID', take:st.take || 'Region'} : s.op === 'group' ? {...s, agg:st.agg || 'Amount'} : s;
   const goals = st.goalFns ? st.goalFns.map(([l, f]) => [l, f]) : st.goals.map(g => PQ_GOALS[g]);
   let steps = [], selCol = null, state = PBI.PQ.run(START, steps);
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="pq"><div class="pq-main"><div class="pq-tools">
-    ${st.ops ? `<span class="grp"><b>Transform</b> <span class="selname"></span>${st.ops.map(o => PQ_BTN[o]).join('')}</span>` : `<span class="grp"><b>Table</b><button data-op="removeBlank">🧹 Remove blank rows</button><button data-op="removeDup">👯 Remove duplicates</button></span>
+    ${st.ops ? `<span class="grp"><b>Transform</b> <span class="selname"></span>${st.ops.map(o => PQ_BTN(st)[o]).join('')}</span>` : `<span class="grp"><b>Table</b><button data-op="removeBlank">🧹 Remove blank rows</button><button data-op="removeDup">👯 Remove duplicates</button></span>
     <span class="grp"><b>Column</b> <span class="selname"></span><button data-op="trim" data-c>✂️ Trim</button><button data-op="proper" data-c>Aa Capitalize Each Word</button><button data-op="type" data-to="number" data-c>123 To Number</button><button data-op="split" data-c>⫽ Split by comma</button></span>`}</div>
     <div class="pq-grid"></div></div><div class="pq-side"><b>Goals</b><ul class="goals"></ul><b>Applied Steps</b><ol class="steps"></ol></div></div>`;
-  function label(s){ return {removeBlank:'Removed Blank Rows', removeDup:'Removed Duplicates', trim:`Trimmed ${s.col}`, proper:`Capitalized ${s.col}`, type:`Changed ${s.col} to ${s.to}`, split:`Split ${s.col} by comma`, unpivot:`Unpivoted other columns`, rename:`Renamed ${s.col} → ${s.to}`, append:'Appended Q2', merge:'Merged Stores (Region)', group:`Grouped by ${s.col}`}[s.op]; }
+  function label(s){ return {...{removeBlank:'Removed Blank Rows', removeDup:'Removed Duplicates', trim:`Trimmed ${s.col}`, proper:`Capitalized ${s.col}`, type:`Changed ${s.col} to ${s.to}`, split:`Split ${s.col} by comma`, unpivot:`Unpivoted other columns`, rename:`Renamed ${s.col} → ${s.to}`, append:'Appended Q2', merge:'Merged Stores (Region)', group:`Grouped by ${s.col}`}, merge:`Merged ${st.take || 'Region'}`, append:'Appended ' + (st.extraLabel || 'Q2')}[s.op]; }
   function draw(){
     state = PBI.PQ.run(START, steps.map(enrich));
     const icon = t => t === 'number' ? '1²3' : t === 'date' ? '📅' : 'ABC';
@@ -295,7 +322,7 @@ R.pq = (st, body, api) => {
     $('.goals', body).innerHTML = goals.map(([l, f]) => `<li class="${f(state) ? 'ok' : ''}">${f(state) ? '✅' : '⬜'} ${l}</li>`).join('');
   }
   $$('.pq-tools button', body).forEach(b => b.onclick = () => { const op = b.dataset.op; const s = {op}; if(b.hasAttribute('data-c')){ if(!selCol) return; s.col = selCol; } if(op === 'type') s.to = b.dataset.to; if(op === 'split') s.delim = ','; if(op === 'unpivot') s.keep = [selCol]; if(op === 'rename'){ const to = ($('#rnTo', body).value || '').trim(); if(!to){ api.fail('Type the new column name first.', true); return; } if(state.cols.some(c => c.name === to)){ api.fail(`There is already a column called ${to}.`, true); return; } s.to = to; $('#rnTo', body).value = ''; }
-    if(op === 'group' && !state.rows.every(r => typeof r.Amount === 'number')){ api.fail('Select the column to group by first.', true); return; }
+    if(op === 'group' && !state.rows.every(r => typeof r[st.agg || 'Amount'] === 'number')){ api.fail('Select the column to group by first.', true); return; }
     if(op === 'split' && !String(state.rows[0]?.[selCol] ?? '').includes(',')){ api.fail(`"${selCol}" has no commas to split on. Pick the Location column.`, true); return; }
     steps.push(s); if(op === 'split' || op === 'unpivot' || op === 'rename' || op === 'group') selCol = null; draw(); });
   const rn = $('#rnTo', body); if(rn) rn.addEventListener('keydown', e => e.stopPropagation());
@@ -306,18 +333,20 @@ R.pq = (st, body, api) => {
 // ---------- Model view ----------
 R.model = (st, body, api) => {
   let rels = [], pend = null;
-  const POS = { Products:{x:2, y:4}, Sales:{x:37, y:30}, Stores:{x:72, y:4}, Calendar:{x:72, y:56} };
-  const GOOD = [['Sales','ProductID','Products','ProductID'],['Sales','StoreID','Stores','StoreID'],['Sales','Date','Calendar','Date']];
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="mv"><svg class="mv-lines"></svg>${Object.keys(POS).map(t => `<div class="mt ${t === 'Sales' ? 'fact' : ''}" style="left:${POS[t].x}%;top:${POS[t].y}%" data-t="${t}"><b>${t}${t === 'Sales' ? ' ⭐' : ''}</b>${M.T[t].cols.map(c => `<button data-t="${t}" data-c="${c}">${c}</button>`).join('')}</div>`).join('')}</div><div class="rels"></div>`;
+  const CL = st.model === 'clinic', MM = CL ? MC : M, FACTS = CL ? ['Visits','Labs'] : ['Sales'];
+  const POS = CL ? { Patients:{x:2, y:2}, Visits:{x:37, y:4}, Doctors:{x:72, y:2}, Labs:{x:2, y:58}, Calendar:{x:72, y:58} } : { Products:{x:2, y:4}, Sales:{x:37, y:30}, Stores:{x:72, y:4}, Calendar:{x:72, y:56} };
+  const ALLGOOD = CL ? [['Visits','PatientID','Patients','PatientID'],['Visits','DoctorID','Doctors','DoctorID'],['Visits','Date','Calendar','Date'],['Labs','PatientID','Patients','PatientID'],['Labs','Date','Calendar','Date']] : [['Sales','ProductID','Products','ProductID'],['Sales','StoreID','Stores','StoreID'],['Sales','Date','Calendar','Date']];
+  const GOOD = st.require ? st.require.map(i => ALLGOOD[i]) : ALLGOOD;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="mv"><svg class="mv-lines"></svg>${Object.keys(POS).map(t => `<div class="mt ${FACTS.includes(t) ? 'fact' : ''}" style="left:${POS[t].x}%;top:${POS[t].y}%" data-t="${t}"><b>${t}${FACTS.includes(t) ? ' ⭐' : ''}</b>${MM.T[t].cols.map(c => `<button data-t="${t}" data-c="${c}">${c}</button>`).join('')}</div>`).join('')}</div><div class="rels"></div>`;
   const mv = $('.mv', body);
-  const isGood = r => GOOD.some(g => (g[0] === r[0] && g[1] === r[1] && g[2] === r[2] && g[3] === r[3]) || (g[2] === r[0] && g[3] === r[1] && g[0] === r[2] && g[1] === r[3]));
+  const isGood = r => ALLGOOD.some(g => (g[0] === r[0] && g[1] === r[1] && g[2] === r[2] && g[3] === r[3]) || (g[2] === r[0] && g[3] === r[1] && g[0] === r[2] && g[1] === r[3]));
   function lines(){ const svg = $('.mv-lines', body); if(!svg || !mv.isConnected) return; const box = mv.getBoundingClientRect();
     svg.setAttribute('viewBox', `0 0 ${box.width} ${box.height}`);
     svg.innerHTML = rels.map(r => { const a = $(`button[data-t="${r[0]}"][data-c="${r[1]}"]`, mv).getBoundingClientRect(), b = $(`button[data-t="${r[2]}"][data-c="${r[3]}"]`, mv).getBoundingClientRect();
       const ax = (a.left + a.width/2 < b.left + b.width/2 ? a.right : a.left) - box.left, ay = a.top + a.height/2 - box.top, bx = (a.left < b.left ? b.left : b.right) - box.left, by = b.top + b.height/2 - box.top; const ok = isGood(r);
-      return `<path d="M${ax} ${ay} C${(ax+bx)/2} ${ay} ${(ax+bx)/2} ${by} ${bx} ${by}" fill="none" stroke="${ok ? '#2f9e77' : '#e36b6b'}" stroke-width="2.5" ${ok ? '' : 'stroke-dasharray="6 5"'}/><text x="${ax + (bx > ax ? 8 : -14)}" y="${ay - 6}" class="tl">${r[0] === 'Sales' ? '*' : '1'}</text><text x="${bx + (bx > ax ? -14 : 8)}" y="${by - 6}" class="tl">${r[2] === 'Sales' ? '*' : '1'}</text>`; }).join(''); }
+      return `<path d="M${ax} ${ay} C${(ax+bx)/2} ${ay} ${(ax+bx)/2} ${by} ${bx} ${by}" fill="none" stroke="${ok ? '#2f9e77' : '#e36b6b'}" stroke-width="2.5" ${ok ? '' : 'stroke-dasharray="6 5"'}/><text x="${ax + (bx > ax ? 8 : -14)}" y="${ay - 6}" class="tl">${FACTS.includes(r[0]) ? '*' : '1'}</text><text x="${bx + (bx > ax ? -14 : 8)}" y="${by - 6}" class="tl">${FACTS.includes(r[2]) ? '*' : '1'}</text>`; }).join(''); }
   function draw(){ $$('.mt button', mv).forEach(b => b.classList.toggle('pend', !!pend && pend[0] === b.dataset.t && pend[1] === b.dataset.c));
-    $('.rels', body).innerHTML = rels.length ? rels.map((r, i) => `<span class="chip ${isGood(r) ? 'good' : 'bad'}">${r[0]}[${r[1]}] ↔ ${r[2]}[${r[3]}] <button data-i="${i}">✕</button></span>`).join('') : '<span class="small muted">No relationships yet. Click a column in Sales, then its match.</span>';
+    $('.rels', body).innerHTML = rels.length ? rels.map((r, i) => `<span class="chip ${isGood(r) ? 'good' : 'bad'}">${r[0]}[${r[1]}] ↔ ${r[2]}[${r[3]}] <button data-i="${i}">✕</button></span>`).join('') : '<span class="small muted">No relationships yet. Click a key column in a ⭐ fact table, then its match.</span>';
     $$('.rels button', body).forEach(b => b.onclick = () => { rels.splice(+b.dataset.i, 1); draw(); }); requestAnimationFrame(lines); }
   $$('.mt button', mv).forEach(b => b.onclick = () => { const t = b.dataset.t, c = b.dataset.c;
     if(!pend || pend[0] === t){ pend = [t, c]; draw(); return; }
@@ -325,27 +354,27 @@ R.model = (st, body, api) => {
     if(rels.some(x => (x[0] === r[0] && x[2] === r[2]) || (x[0] === r[2] && x[2] === r[0]))){ api.fail('Those two tables are already connected. Remove the old line first.', true); draw(); return; }
     rels.push(r); if(!isGood(r)) api.fail(`${r[1]} and ${r[3]} hold different things, so this relationship won't work. Match the same key on both sides.`, true); draw(); });
   draw(); window.addEventListener('resize', lines);
-  return { check: () => { const good = rels.filter(isGood).length, bad = rels.length - good; return bad ? 'Remove the red (wrong) relationship first.' : good === 3 ? true : `${good} of 3 relationships done. Keep going!`; },
-    solve: () => { rels = GOOD.map(g => g.slice()); draw(); }, hint: 'Each dimension table shares one ID column with Sales: ProductID, StoreID and Date.' };
+  return { check: () => { const bad = rels.filter(r => !isGood(r)).length; const got = GOOD.filter(g => rels.some(r => (r[0] === g[0] && r[1] === g[1] && r[2] === g[2]) || (r[2] === g[0] && r[3] === g[1] && r[0] === g[2]))).length; return bad ? 'Remove the red (wrong) relationship first.' : got === GOOD.length ? true : `${got} of ${GOOD.length} relationships done. Keep going!`; },
+    solve: () => { rels = GOOD.map(g => g.slice()); draw(); }, hint: CL ? 'Facts (Visits, Labs) connect to dimensions by matching ID columns: PatientID, DoctorID and Date.' : 'Each dimension table shares one ID column with Sales: ProductID, StoreID and Date.' };
 };
 
 // ---------- DAX ----------
 R.dax = (st, body, api) => {
-  const LM = PBI.buildModel(DATA); (st.pre || []).forEach(t => { const m = PBI.defineMeasure(LM, t); LM.measures[m.name] = m; });
+  const LM = buildM(st.model); (st.pre || []).forEach(t => { const m = PBI.defineMeasure(LM, t); LM.measures[m.name] = m; });
   const FIL = st.year ? [{table:'Calendar', col:'Year', pred:v => v === st.year}] : [];
   const autoCheck = (v, m) => { if(st.need && !st.need.test(m.text)) return 'Use the function the task asks for. Peek at 💡 Stuck? if you need it.';
-    const SM = PBI.buildModel(DATA); (st.pre || []).forEach(t => { const q = PBI.defineMeasure(SM, t); SM.measures[q.name] = q; }); const sol = PBI.defineMeasure(SM, st.solution); SM.measures[sol.name] = sol;
+    const SM = buildM(st.model); (st.pre || []).forEach(t => { const q = PBI.defineMeasure(SM, t); SM.measures[q.name] = q; }); const sol = PBI.defineMeasure(SM, st.solution); SM.measures[sol.name] = sol;
     const close = (a, b) => (a == null && b == null) || (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 0.006 * Math.max(1, Math.abs(b)));
     if(!close(v, PBI.evalMeasure(SM, sol.ast, FIL))) return 'The total doesn\'t match the expected result yet. Compare with the hint.';
     const [mt, mc] = st.matrix; const A = PBI.groupBy(LM, mt, mc, m.ast, FIL), B = PBI.groupBy(SM, mt, mc, sol.ast, FIL);
     const bad = A.find((r, i) => !close(r.value, B[i].value)); return bad ? `The total looks right, but the ${bad.key} row doesn't match. Check your filters.` : true; };
   body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="dax"><div class="dax-main"><div class="dax-bar"><span class="fx">fx</span><textarea class="daxin" rows="2" spellcheck="false" placeholder="${esc(st.target)} = ">${esc(st.target)} = </textarea></div><div class="row"><button class="btn small" id="mk">✓ Create measure</button><span class="small muted">Ctrl+Enter</span></div><div class="dax-out"></div></div>
-    <div class="dax-side"><b>Fields</b>${Object.keys(LM.T).map(t => `<details ${t === 'Sales' ? 'open' : ''}><summary>🗂️ ${t}</summary>${LM.T[t].cols.map(c => `<button class="ins" data-v="${t}[${c}]">${c}</button>`).join('')}</details>`).join('')}<div class="measures"></div></div></div>`;
+    <div class="dax-side"><b>Fields</b>${Object.keys(LM.T).map(t => `<details ${t === (st.model === 'clinic' ? 'Visits' : 'Sales') ? 'open' : ''}><summary>🗂️ ${t}</summary>${LM.T[t].cols.map(c => `<button class="ins" data-v="${t}[${c}]">${c}</button>`).join('')}</details>`).join('')}<div class="measures"></div></div></div>`;
   const ta = $('.daxin', body); let last = null;
   function side(){ $('.measures', body).innerHTML = Object.keys(LM.measures).length ? '<b>Measures</b>' + Object.keys(LM.measures).map(n => `<button class="ins m" data-v="[${n}]">🧮 ${n}</button>`).join('') : ''; $$('.ins', body).forEach(b => b.onclick = () => { const p = ta.selectionStart; ta.value = ta.value.slice(0, p) + b.dataset.v + ta.value.slice(ta.selectionEnd); ta.focus(); ta.setSelectionRange(p + b.dataset.v.length, p + b.dataset.v.length); }); }
   function run(){
     try{ const m = PBI.defineMeasure(LM, ta.value); LM.measures[m.name] = m; const v = PBI.evalMeasure(LM, m.ast, FIL); last = {v, m};
-      const [mt, mc] = st.matrix; const g = PBI.groupBy(LM, mt, mc, m.ast, FIL); const f = x => x == null ? '(blank)' : st.pct ? (x*100).toFixed(1) + '%' : typeof x === 'number' ? (/revenue|value|check/i.test(m.name) ? '$' : '') + (+x.toFixed(2)).toLocaleString() : x;
+      const [mt, mc] = st.matrix; const g = PBI.groupBy(LM, mt, mc, m.ast, FIL); const f = x => x == null ? '(blank)' : st.pct ? (x*100).toFixed(1) + '%' : typeof x === 'number' ? (/revenue|value|check|fee|cost/i.test(m.name) ? '$' : '') + (+x.toFixed(2)).toLocaleString() : x;
       $('.dax-out', body).innerHTML = `<div class="kpi"><div class="kv">${f(v)}</div><div class="kl">${esc(m.name)}</div></div><table class="pt small"><tr><th>${mc}</th><th>${esc(m.name)}</th></tr>${g.map(r => `<tr><td>${esc(r.key)}</td><td class="num">${f(r.value)}</td></tr>`).join('')}<tr class="gt"><td>Total</td><td class="num">${f(v)}</td></tr></table><div class="small muted">${st.year ? `Filtered to ${st.year} · ` : ''}Same measure, a different filter on each row: that's filter context.</div>`;
       side(); return true;
     }catch(e){ last = null; $('.dax-out', body).innerHTML = `<div class="errbox">⚠️ ${esc(e.message)}</div>`; return false; }
@@ -358,8 +387,8 @@ R.dax = (st, body, api) => {
 
 // ---------- Calculated column ----------
 R.calccol = (st, body, api) => {
-  const LM = PBI.buildModel(DATA); let last = null;
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="dax-bar"><span class="fx">fx</span><textarea class="daxin" rows="2" spellcheck="false">Size = </textarea></div><div class="row"><button class="btn small" id="mkc">✓ Create column</button><span class="small muted">Row context: the formula runs once for every row of ${st.table}.</span></div><div class="cc-out"></div>`;
+  const LM = buildM(st.model); let last = null;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="dax-bar"><span class="fx">fx</span><textarea class="daxin" rows="2" spellcheck="false">${esc(st.col || 'Size')} = </textarea></div><div class="row"><button class="btn small" id="mkc">✓ Create column</button><span class="small muted">Row context: the formula runs once for every row of ${st.table}.</span></div><div class="cc-out"></div>`;
   const ta = $('.daxin', body); ta.addEventListener('keydown', e => { e.stopPropagation(); if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); $('#mkc', body).click(); } });
   function run(){ try{ const c = PBI.calcColumn(LM, st.table, ta.value); last = c; const rows = LM.T[st.table].rows; const counts = {}; c.vals.forEach(v => counts[v] = (counts[v] || 0) + 1);
       $('.cc-out', body).innerHTML = `<div class="row">${Object.entries(counts).map(([k, n]) => `<span class="chip">${esc(k)}: ${n} rows</span>`).join('')}</div><div class="pq-grid"><table class="pqt"><tr>${LM.T[st.table].cols.map(cn => `<th>${cn}</th>`).join('')}<th class="on">${esc(c.name)}</th></tr>${rows.slice(0, 10).map((r, i) => `<tr>${LM.T[st.table].cols.map(cn => `<td>${esc(r[cn])}</td>`).join('')}<td><b>${esc(c.vals[i])}</b></td></tr>`).join('')}</table><div class="small muted">First 10 of ${rows.length} rows</div></div>`; return true; }
@@ -370,30 +399,31 @@ R.calccol = (st, body, api) => {
 };
 // ---------- Row-level security ----------
 R.rls = (st, body, api) => {
-  let set = null; const tr = M.measures['Total Revenue'];
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rls"><div class="rls-role"><b>🔐 Manage roles</b><div class="small muted">Role: West Managers · Table: Stores</div><div class="dax-bar"><span class="fx">DAX</span><textarea class="daxin" rows="1" spellcheck="false" placeholder='[Region] = "West"'></textarea></div><button class="btn small" id="va">👁️ View as role</button></div><div class="rls-out"></div></div>`;
+  const MM = st.model === 'clinic' ? MC : M, TB = st.table || 'Stores', ME = MM.measures[st.measure || 'Total Revenue'], ROLE = st.role || 'West Managers'; let set = null;
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rls"><div class="rls-role"><b>🔐 Manage roles</b><div class="small muted">Role: ${esc(ROLE)} · Table: ${TB}</div><div class="dax-bar"><span class="fx">DAX</span><textarea class="daxin" rows="1" spellcheck="false" placeholder='[Region] = "West"'></textarea></div><button class="btn small" id="va">👁️ View as role</button></div><div class="rls-out"></div></div>`;
   const ta = $('.daxin', body); ta.addEventListener('keydown', e => { e.stopPropagation(); if(e.key === 'Enter'){ e.preventDefault(); $('#va', body).click(); } });
-  function run(){ try{ set = PBI.rowFilter(M, 'Stores', ta.value); const f = [{table:'Stores', rowPred: r => set.has(r)}]; const v = PBI.evalMeasure(M, tr.ast, f);
-      $('.rls-out', body).innerHTML = `<div class="kpi"><div class="kv">${fmtNum(+v.toFixed(2), true)}</div><div class="kl">Total Revenue · viewing as West Managers</div></div><div class="row">${M.T.Stores.rows.map(r => `<span class="chip ${set.has(r) ? 'good' : ''}" style="${set.has(r) ? '' : 'opacity:.35;text-decoration:line-through'}">${r.Store} · ${r.Region}</span>`).join('')}</div>`; return true; }
+  function run(){ try{ set = PBI.rowFilter(MM, TB, ta.value); const f = [{table:TB, rowPred: r => set.has(r)}]; const v = PBI.evalMeasure(MM, ME.ast, f); const lab = r => MM.T[TB].cols.slice(1, 3).map(c => r[c]).join(' · ');
+      $('.rls-out', body).innerHTML = `<div class="kpi"><div class="kv">${fmtNum(+(+v || 0).toFixed(2), /Revenue/.test(ME.name))}</div><div class="kl">${esc(ME.name)} · viewing as ${esc(ROLE)}</div></div><div class="row">${MM.T[TB].rows.slice(0, 40).map(r => `<span class="chip ${set.has(r) ? 'good' : ''}" style="${set.has(r) ? '' : 'opacity:.35;text-decoration:line-through'}">${esc(lab(r))}</span>`).join('')}</div>`; return true; }
     catch(e){ set = null; $('.rls-out', body).innerHTML = `<div class="errbox">⚠️ ${esc(e.message)}</div>`; return false; } }
   $('#va', body).onclick = () => { if(run()) api.check(); };
   setTimeout(() => ta.focus(), 60);
-  return { check: () => { if(!set && !run()) return 'Write a filter like [Region] = "West" first.'; return st.check(set, M); }, solve: () => { ta.value = st.solution; run(); }, hint: 'A role filter is a true/false test per row: [Region] = "West"' };
+  return { check: () => { if(!set && !run()) return 'Write a filter like [Region] = "West" first.'; return st.check(set, MM); }, solve: () => { ta.value = st.solution; run(); }, hint: 'A role filter is a true/false test per row: [Region] = "West"' };
 };
 
 // ---------- Report builder ----------
 const DIMS = ['Stores.Region','Stores.Store','Products.Category','Products.Product','Calendar.Month','Calendar.Quarter'];
 const VTYPES = [['card','🔢 Card'],['column','📊 Column'],['bar','📶 Bar'],['line','📈 Line'],['pie','🍩 Donut'],['table','📋 Table']];
 R.report = (st, body, api) => {
+  const MD = MODELS[st.model || 'boba'], M = MD.M, DIMS = MD.dims, SL = MD.slicer;
   let C = {tiles: Array.from({length: st.tiles}, () => ({type:null, axis:null, measure:null})), slicer:'All', year:null}; let cur = 0;
-  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rb"><div class="rb-canvas"><div class="slicer"><b>Region slicer:</b> ${['All','East','West','Midwest','South'].map(r => `<button data-r="${r}">${r}</button>`).join('')}${st.years ? ' <b style="margin-left:10px">Year:</b> ' + ['All',2024,2025].map(y => `<button data-y="${y}">${y}</button>`).join('') : ''}</div><div class="tiles t${st.tiles}"></div></div>
+  body.innerHTML = `<h2>${esc(st.title)}</h2><p class="lead task">${st.task}</p><div class="rb"><div class="rb-canvas"><div class="slicer"><b>${SL.label} slicer:</b> ${['All', ...SL.vals].map(r => `<button data-r="${r}">${r}</button>`).join('')}${st.years ? ' <b style="margin-left:10px">Year:</b> ' + ['All',2024,2025].map(y => `<button data-y="${y}">${y}</button>`).join('') : ''}</div><div class="tiles t${st.tiles}"></div></div>
     <div class="rb-side"><b>Visualizations</b><div class="vtypes">${VTYPES.map(([v, l]) => `<button data-v="${v}">${l}</button>`).join('')}</div><b>Fields: categories</b><div class="flist">${DIMS.map(d => `<button data-d="${d}">${d.replace('.', ' › ')}</button>`).join('')}</div><b>Measures</b><div class="flist">${Object.keys(M.measures).map(m => `<button data-m="${m}">🧮 ${m}</button>`).join('')}</div></div></div>`;
-  function filt(){ return (C.slicer === 'All' ? [] : [{table:'Stores', col:'Region', pred:v => v === C.slicer}]).concat(C.year ? [{table:'Calendar', col:'Year', pred:v => v === C.year}] : []); }
+  function filt(){ return (C.slicer === 'All' ? [] : [{table:SL.t, col:SL.c, pred:v => v === C.slicer}]).concat(C.year ? [{table:'Calendar', col:'Year', pred:v => v === C.year}] : []); }
   function tile(t){ if(!t.type || !t.measure) return `<div class="ph">${!t.type ? '① Pick a visual type' : '② Pick a measure'}${t.type && t.type !== 'card' && !t.axis ? '<br>③ Pick a category' : ''}</div>`;
-    const money = /Revenue|Value/.test(t.measure) && !/%/.test(t.measure), pct = /%/.test(t.measure);
+    const money = /Revenue|Value|Fee/.test(t.measure) && !/%/.test(t.measure), pct = /%/.test(t.measure);
     if(t.type === 'card'){ const v = PBI.evalMeasure(M, M.measures[t.measure].ast, filt()); return `<div class="kpi"><div class="kv">${pct ? (v == null ? '(blank)' : (v*100).toFixed(1) + '%') : fmtNum(+(+v).toFixed(2), money)}</div><div class="kl">${t.measure}${C.slicer !== 'All' ? ' · ' + C.slicer : ''}${C.year ? ' · ' + C.year : ''}</div></div>`; }
     if(!t.axis) return `<div class="ph">③ Pick a category for the axis</div>`;
-    const [tb, col] = t.axis.split('.'); const data = PBI.groupBy(M, tb, col, t.measure, filt()).filter(d => d.value !== null && !(tb === 'Stores' && C.slicer !== 'All' && d.value === 0));
+    const [tb, col] = t.axis.split('.'); const data = PBI.groupBy(M, tb, col, t.measure, filt()).filter(d => d.value !== null && !(tb === SL.t && C.slicer !== 'All' && d.value === 0));
     return `<div class="vt-title">${t.measure} by ${col}</div>${chartSVG(t.type, data, {money, pct, axisName:col, valName:t.measure, compact: C.tiles.length > 1})}`; }
   function draw(){ $$('.slicer button[data-r]', body).forEach(b => b.classList.toggle('on', b.dataset.r === C.slicer)); $$('.slicer button[data-y]', body).forEach(b => b.classList.toggle('on', String(b.dataset.y) === String(C.year || 'All')));
     $('.tiles', body).innerHTML = C.tiles.map((t, i) => `<div class="tile ${i === cur ? 'cur' : ''}" data-i="${i}">${tile(t)}</div>`).join('');
@@ -411,45 +441,52 @@ R.report = (st, body, api) => {
 let player = null;
 function startLesson(id, stepIdx){
   const lesson = findLesson(id); if(!lesson) return route('home');
-  bumpDay(); S.last = id; save();
-  let i = stepIdx ?? Math.min(S.pos[id] || 0, lesson.steps.length - 1); if(S.done[id] && stepIdx === undefined) i = 0;
+  bumpDay(); if(!lesson.mode) S.last = id; save(); if(!lesson.steps.length) return route('home');
+  let i = stepIdx ?? Math.min(S.pos[id] || 0, lesson.steps.length - 1); if((S.done[id] || lesson.mode === 'check') && stepIdx === undefined) i = 0;
   const app = $('#app'); document.body.classList.add('focus');
-  app.innerHTML = `<div class="player"><div class="p-top"><button class="iconbtn" id="exit" title="Back to home (Esc)">✕</button><div class="p-title"><b>${esc(lesson.title)}</b><span class="muted small">${lesson.track.name} · lesson ${lesson.idx+1}</span></div><div class="segs">${lesson.steps.map((_, k) => `<span data-k="${k}"></span>`).join('')}</div>
+  app.innerHTML = `<div class="player"><div class="p-top"><button class="iconbtn" id="exit" title="Back to home (Esc)">✕</button><div class="p-title"><b>${esc(lesson.title)}</b><span class="muted small">${lesson.track.name} · lesson ${lesson.idx+1}${lesson.mode === 'check' ? ' · scored' : ''}</span></div><div class="segs">${lesson.steps.map((_, k) => `<span data-k="${k}"></span>`).join('')}</div>
     <button class="pill timer" id="timer" title="Focus timer: click to pause"></button><button class="iconbtn" id="speakBtn" title="Read aloud">🔊</button><button class="iconbtn" id="parkBtn" title="Parking lot: jot down a distracting thought">📝</button></div>
     <div class="p-body"><div class="card step" id="stepCard"></div><div class="feedback" id="fb" aria-live="polite"></div></div>
-    <div class="p-bottom"><button class="btn ghost" id="back">← Back</button><div class="mid"><button class="btn ghost small" id="hintBtn" hidden>💡 Stuck?</button><button class="btn ghost small" id="solveBtn" hidden>👀 Show me</button></div><button class="btn" id="primary">Next →</button></div></div>`;
+    <div class="p-bottom"><button class="btn ghost" id="back">← Back</button><div class="mid"><button class="btn ghost small" id="hintBtn" hidden>💡 Stuck?</button><button class="btn ghost small" id="solveBtn" hidden>👀 Show me</button><button class="btn ghost small" id="skipBtn" hidden>🙈 I don't know yet</button></div><button class="btn" id="primary">Next →</button></div></div>`;
   $('#exit').onclick = () => route('home'); $('#parkBtn').onclick = parking;
-  player = { lesson, i, fails:0, ctrl:null, passed:false };
+  player = { lesson, i, fails:0, ctrl:null, passed:false, mode: lesson.mode || 'lesson', scores: [], local: {} };
   timerUI(); renderStep();
 }
 function renderStep(){
-  const P = player, st = P.lesson.steps[P.i], body = $('#stepCard'); P.fails = 0; P.passed = !!S.passed[P.lesson.id + ':' + P.i];
+  const P = player, st = P.lesson.steps[P.i], body = $('#stepCard'); P.fails = 0; P.revealed = false; P.passed = P.mode === 'check' ? !!P.local[P.i] : !!S.passed[P.lesson.id + ':' + P.i];
   S.pos[P.lesson.id] = P.i; save();
-  $$('.segs span').forEach((s, k) => { s.className = k < P.i || S.passed[P.lesson.id + ':' + k] ? 'done' : k === P.i ? 'cur' : ''; });
+  $$('.segs span').forEach((s, k) => { const d = P.mode === 'check' ? !!P.local[k] : (k < P.i || S.passed[P.lesson.id + ':' + k]); s.className = d ? 'done' : k === P.i ? 'cur' : ''; });
   body.className = 'card step type-' + st.type; body.innerHTML = ''; delete body.dataset.ok; $('#fb').innerHTML = ''; $('#fb').className = 'feedback';
-  const api = { pass: (quiet) => pass(quiet), fail: (m, soft) => fail(m, soft), check: () => doCheck() };
+  const api = { pass: (quiet, sc) => pass(quiet, sc), fail: (m, soft) => fail(m, soft), check: () => doCheck(), mode: P.mode };
   P.ctrl = (R[st.type] || R.learn)(st, body, api, {lesson:P.lesson}) || {};
+  if(st.s) body.insertAdjacentHTML('afterbegin', `<div class="pc-story">💬 ${st.s}</div>`);
+  if(P.mode === 'check' && st.k) body.insertAdjacentHTML('afterbegin', `<div class="ck-skill">🎯 Skill: <b>${esc(XSKILLS[st.k] || st.k)}</b></div>`);
   const interactive = !['learn','quiz','real','order'].includes(st.type);
   $('#hintBtn').hidden = !(P.ctrl.hint); $('#solveBtn').hidden = true;
   $('#hintBtn').onclick = () => { $('#fb').className = 'feedback hint'; $('#fb').innerHTML = '💡 ' + P.ctrl.hint; if(P.ctrl.solve) $('#solveBtn').hidden = false; };
-  $('#solveBtn').onclick = () => { P.ctrl.solve(); $('#fb').className = 'feedback hint'; $('#fb').innerHTML = '👀 Here\'s one way to do it. Look it over, then press <b>Check</b>.'; };
+  $('#skipBtn').hidden = !(P.mode === 'check' && !P.passed && st.type !== 'learn' && st.type !== 'story');
+  $('#skipBtn').onclick = () => { if(P.ctrl.solve) P.ctrl.solve(); P.revealed = true; $('#fb').className = 'feedback hint'; $('#fb').innerHTML = '📘 No problem. Here\'s the answer to study. This one counts as 0, and it will show up in your report.'; pass(true, 0); };
+  $('#solveBtn').onclick = () => { P.ctrl.solve(); P.revealed = true; $('#fb').className = 'feedback hint'; $('#fb').innerHTML = '👀 Here\'s one way to do it. Look it over, then press <b>Check</b>.'; };
   $('#back').disabled = P.i === 0; $('#back').onclick = () => { if(P.i > 0){ P.i--; renderStep(); } };
   $('#speakBtn').onclick = () => speak(P.ctrl.speakText || body.innerText);
   const prim = $('#primary');
-  if(st.type === 'learn' || P.passed || P.ctrl.ready){ setNext(); if(st.type === 'learn' && !P.passed){ markPassed(5, true); } }
+  if(st.type === 'learn' || st.type === 'story' || P.passed || P.ctrl.ready){ setNext(); if((st.type === 'learn' || st.type === 'story') && !P.passed){ markPassed(5, true); } }
   else if(interactive){ prim.textContent = '✓ Check'; prim.className = 'btn mint'; prim.onclick = doCheck; }
   else { prim.textContent = st.type === 'quiz' ? 'Pick an answer' : 'Finish the task'; prim.className = 'btn'; prim.disabled = true; }
   if(S.set.speak && st.type === 'learn') speak(P.ctrl.speakText);
   window.scrollTo({top:0});
 }
 function setNext(){ const prim = $('#primary'); prim.disabled = false; prim.className = 'btn';
-  const last = player.i === player.lesson.steps.length - 1; prim.textContent = last ? '🏁 Finish lesson' : 'Next →'; prim.onclick = () => last ? finishLesson() : (player.i++, renderStep()); }
-function markPassed(xp, quiet){ const k = player.lesson.id + ':' + player.i; if(!S.passed[k]){ S.passed[k] = true; S.xp += xp; bumpDay(); S.day.steps++; save(); if(!quiet) xpFloat(xp); if(S.day.steps === S.goal){ toast('🎯 Daily goal reached! Amazing focus today.'); confetti(40); } } player.passed = true;
+  const last = player.i === player.lesson.steps.length - 1; prim.textContent = last ? (player.mode === 'check' ? '📊 See my skill report' : player.mode === 'practice' ? '🏁 Finish practice' : '🏁 Finish lesson') : 'Next →';
+  prim.onclick = () => last ? (player.mode === 'check' ? finishCheck() : player.mode === 'practice' ? finishPractice() : finishLesson()) : (player.i++, renderStep()); }
+function markPassed(xp, quiet){ const k = player.lesson.id + ':' + player.i; if(player.mode === 'check'){ player.local[player.i] = true; player.passed = true; const seg = $$('.segs span')[player.i]; if(seg) seg.className = 'done'; return; } if(!S.passed[k]){ S.passed[k] = true; S.xp += xp; bumpDay(); S.day.steps++; save(); if(!quiet) xpFloat(xp); if(S.day.steps === S.goal){ toast('🎯 Daily goal reached! Amazing focus today.'); confetti(40); } } player.passed = true;
   const seg = $$('.segs span')[player.i]; if(seg) seg.className = 'done'; }
-function pass(quiet){ const st = player.lesson.steps[player.i]; markPassed(st.type === 'quiz' ? 10 : st.type === 'real' ? 5 : 20, quiet === true);
-  if(quiet !== true){ $('#fb').className = 'feedback ok'; $('#fb').innerHTML = ['🎉 Nailed it!','✨ Perfect!','🙌 Yes! That\'s it.','🌟 Great work!','💪 Smooth!'][Math.floor(Math.random()*5)]; if(!S.set.calm) $('#stepCard').classList.add('celebrate'); }
+function pass(quiet, sc){ const st = player.lesson.steps[player.i];
+  if(player.mode === 'check' && player.scores[player.i] === undefined) player.scores[player.i] = sc !== undefined ? sc : player.revealed ? 0 : player.fails ? 0.5 : 1;
+  $('#skipBtn').hidden = true; markPassed(st.type === 'quiz' ? 10 : st.type === 'real' ? 5 : 20, quiet === true);
+  if(quiet !== true && sc !== 0){ $('#fb').className = 'feedback ok'; $('#fb').innerHTML = ['🎉 Nailed it!','✨ Perfect!','🙌 Yes! That\'s it.','🌟 Great work!','💪 Smooth!'][Math.floor(Math.random()*5)]; if(!S.set.calm) $('#stepCard').classList.add('celebrate'); }
   setNext(); $('#primary').focus({preventScroll:true}); }
-function fail(msg, soft){ if(!soft){ player.fails++; if(player.fails >= 2 && player.ctrl.solve) $('#solveBtn').hidden = false; }
+function fail(msg, soft){ if(!soft || player.mode === 'check'){ player.fails++; if(player.fails >= 2 && player.ctrl.solve) $('#solveBtn').hidden = false; }
   $('#fb').className = 'feedback no'; $('#fb').innerHTML = '🤔 ' + msg; const c = $('#stepCard'); c.classList.remove('wiggle'); void c.offsetWidth; c.classList.add('wiggle'); }
 function doCheck(){ const r = player.ctrl.check ? player.ctrl.check() : true; if(r === true) pass(); else fail(r || 'Not quite yet.'); }
 function finishLesson(){
@@ -459,8 +496,33 @@ function finishLesson(){
   modal(`${lumi('sm')}<h2>Lesson complete! 🎉</h2><p>You finished <b>${esc(L.title)}</b>${first ? ' · <b>+50 XP</b>' : ''}</p>
     <div class="donegrid"><div><b>${S.day.steps}</b><span>steps today</span></div><div><b>🔥 ${S.streak.count}</b><span>day streak</span></div><div><b>${S.xp}</b><span>total XP</span></div></div>
     ${unlocked ? `<p class="unlock">🎁 Brain-break game unlocked: <b>${esc(unlocked.title)}</b></p>` : ''}
+    ${(PRACTICE_SETS[L.id] || []).length ? `<p class="unlock">🏋️ <b>${PRACTICE_SETS[L.id].length} practice challenges</b> and a 🎓 <b>Skills Check</b> are ready for this lesson.</p><div class="row center"><a class="btn mint small" href="#l-${L.id}_p" data-close>🏋️ Practice</a><a class="btn small" href="#l-${L.id}_c" data-close>🎓 Skills Check</a></div>` : ''}
     <div class="col">${trackFinished ? `<a class="btn" href="#cert-${L.track.id}" data-close>🏆 Get your ${L.track.name} certificate</a>` : next ? `<a class="btn" href="#l-${next.id}" data-close>Next: ${esc(next.title)} →</a>` : ''}
     ${unlocked ? `<a class="btn ghost" href="#g-${unlocked.id}" data-close>🎮 Play ${esc(unlocked.title)}</a>` : ''}<a class="btn ghost" href="#home" data-close>✋ Done for now (that's OK!)</a></div>`);
+}
+
+function finishPractice(){
+  const L = player.lesson; const n = L.steps.filter((_, k) => S.passed[L.id + ':' + k]).length; S.xp += 20; save(); confetti(50);
+  modal(`${lumi('sm')}<h2>Practice set done! 💪</h2><p>You completed <b>${n}/${L.steps.length}</b> practice challenges for <b>${esc(L.base.title)}</b>.</p><p>Ready to measure yourself? The Skills Check gives you a personal report.</p>
+    <div class="col"><a class="btn" href="#l-${L.base.id}_c" data-close>🎓 Take the Skills Check</a><a class="btn ghost" href="#home" data-close>✋ Done for now</a></div>`);
+}
+const levelName = p => p >= 90 ? '🏆 Mastered' : p >= 70 ? '🌟 Confident' : p >= 50 ? '🌿 Developing' : '🌱 Getting started';
+function finishCheck(){
+  const L = player.lesson, base = L.base, steps = L.steps; const sc = steps.map((_, i) => player.scores[i] ?? 0); const scored = steps.map((st, i) => ({st, v:sc[i]})).filter(x => x.st.k);
+  const pct = scored.length ? Math.round(100 * scored.reduce((a, x) => a + x.v, 0) / scored.length) : 0;
+  const by = {}; scored.forEach(({st, v}) => { by[st.k] = by[st.k] || {got:0, of:0}; by[st.k].got += v; by[st.k].of += 1; });
+  const strong = Object.keys(by).filter(k => by[k].got / by[k].of >= 0.75), weak = Object.keys(by).filter(k => by[k].got / by[k].of < 0.75);
+  S.skill = S.skill || {}; const first = !S.skill[base.id]; S.skill[base.id] = { pct, by, date:new Date().toLocaleDateString() }; S.xp += first ? 40 : 10; save(); if(pct >= 70) confetti(60);
+  const prac = PRACTICE_SETS[base.id] || []; const pfor = k => prac.map((p, i) => ({p, i})).filter(x => x.p.k === k).slice(0, 3);
+  $('#app').innerHTML = `<section class="view"><div class="card report"><div class="rep-top"><div class="rep-score"><b>${pct}%</b><span>${levelName(pct)}</span></div><div><div class="muted small" style="font-weight:800;letter-spacing:1px">SKILL REPORT · ${esc(base.track.name.toUpperCase())}</div><h2 style="margin:2px 0 6px">${esc(base.title)}</h2>
+    <p style="margin:0">${pct >= 90 ? 'Outstanding: you can use this confidently at work.' : pct >= 70 ? 'Solid! A little practice on the items below will make it automatic.' : pct >= 50 ? 'You have the basics. Practise the skills below, then retake the check.' : 'That\'s okay, this is new! Revisit the lesson and practice set, then retake. Every attempt counts.'}</p></div></div>
+    <div class="rep-bars">${Object.entries(by).map(([k, v]) => `<div class="rb"><span>${esc(XSKILLS[k] || k)}</span><div class="bar"><i style="width:${v.got / v.of * 100}%;background:${v.got / v.of >= .75 ? '#5fd3a8' : v.got / v.of >= .5 ? '#f8d77a' : '#f29b9b'}"></i></div><b>${v.got}/${v.of}</b></div>`).join('')}</div>
+    <div class="rep-cols"><div><h3>💪 Strengths</h3>${strong.length ? `<ul>${strong.map(k => `<li>${esc(XSKILLS[k] || k)}</li>`).join('')}</ul>` : '<p class="muted">They\'ll show up here as you practise.</p>'}</div>
+    <div><h3>🎯 Work on next</h3>${weak.length ? `<ul>${weak.map(k => `<li><b>${esc(XSKILLS[k] || k)}</b>${pfor(k).length ? `: practice ${pfor(k).map(x => `<a href="#l-${base.id}_p" data-step="${x.i}">#${x.i + 1}</a>`).join(', ')}` : ''}</li>`).join('')}</ul>` : '<p>Nothing! Move on to the next lesson. 🚀</p>'}</div></div>
+    <p class="small muted">Scoring: ✅ first try = 1 · after a mistake = ½ · "Show me" or "I don't know yet" = 0.</p>
+    <div class="row center"><a class="btn ghost" href="#l-${base.id}_c">↻ Retake</a><a class="btn ghost" href="#l-${base.id}_p">🏋️ Practice set</a>${base.track.lessons[base.idx + 1] ? `<a class="btn" href="#l-${base.track.lessons[base.idx + 1].id}">Next lesson →</a>` : '<a class="btn" href="#home">Home</a>'}</div></div></section>`;
+  document.body.classList.remove('focus'); player = null; clearInterval(T.iv);
+  $$('[data-step]').forEach(a => a.onclick = e => { e.preventDefault(); history.replaceState(null, '', '#l-' + base.id + '_p'); startLesson(base.id + '_p', +a.dataset.step); });
 }
 
 // ---------- focus timer & breaks ----------
@@ -493,7 +555,7 @@ function viewHome(){
   const gm = GAMES.filter(gameUnlocked);
   const trackCard = t => `<div class="card track" style="--tc:${t.color};--ta:${t.accent}"><div class="th"><h2>${t.id === 'excel' ? '📗' : '📊'} ${t.name}</h2><span class="pill">${trackDone(t)}/${t.lessons.length} done</span></div><p class="muted">${t.blurb}</p>
     <ol class="lessons">${t.lessons.map((l, i) => { const L = findLesson(l.id); const un = lessonUnlocked(L), dn = S.done[l.id]; const ps = l.steps.filter((_, k) => S.passed[l.id + ':' + k]).length;
-      return `<li class="${dn ? 'dn' : ''} ${un ? '' : 'lk'}"><a href="${un ? '#l-' + l.id : '#home'}" ${un ? '' : 'aria-disabled="true"'}><span class="no">${dn ? '✓' : un ? i+1 : '🔒'}</span><span class="tt"><b>${esc(l.title)}</b><span class="small muted">${l.mins} min · ${l.steps.length} small steps</span></span><span class="mini"><i style="width:${ps/l.steps.length*100}%"></i></span></a></li>`; }).join('')}</ol>
+      return `<li class="${dn ? 'dn' : ''} ${un ? '' : 'lk'}"><a href="${un ? '#l-' + l.id : '#home'}" ${un ? '' : 'aria-disabled="true"'}><span class="no">${dn ? '✓' : un ? i+1 : '🔒'}</span><span class="tt"><b>${esc(l.title)}</b><span class="small muted">${l.mins} min · ${l.steps.length} small steps</span></span><span class="mini"><i style="width:${ps/l.steps.length*100}%"></i></span></a>${un && (PRACTICE_SETS[l.id] || []).length ? `<div class="lx"><a href="#l-${l.id}_p">🏋️ Practice ${(PRACTICE_SETS[l.id] || []).filter((_, k) => S.passed[l.id + '_p:' + k]).length}/${PRACTICE_SETS[l.id].length}</a><a href="#l-${l.id}_c">🎓 ${S.skill && S.skill[l.id] ? 'Skills ' + S.skill[l.id].pct + '%' : 'Skills Check'}</a></div>` : ''}</li>`; }).join('')}</ol>
     ${trackDone(t) === t.lessons.length ? `<a class="btn small" href="#cert-${t.id}">🏆 Certificate</a>` : ''}</div>`;
   return `<section class="view home">
   <div class="card hero"><div class="lumiwrap">${lumi()}</div><div><div class="muted small" style="font-weight:800;letter-spacing:1px">${new Date().toLocaleDateString(undefined, {weekday:'long'}).toUpperCase()}</div><h1>${S.name ? `Hi ${esc(S.name)}! ` : 'Hi! '}One small step?</h1>
@@ -501,10 +563,20 @@ function viewHome(){
     ${nextL ? `<a class="btn big" href="#l-${nextL.id}">▶ ${S.pos[nextL.id] ? 'Continue' : 'Start'}: ${esc(nextL.title)} <span class="small">· step ${(S.pos[nextL.id] || 0) + 1} of ${nextL.steps.length}</span></a>` : `<div class="btn big">🏆 You finished everything!</div>`}</div>
     <div class="ring"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" class="bg"/><circle cx="50" cy="50" r="40" class="fg" style="stroke-dasharray:${C};stroke-dashoffset:${C*(1-pct)}"/></svg><div><b>${S.day.steps}/${S.goal}</b><span>today's steps</span></div><select id="goalSel" title="Daily goal">${[4,8,12,20].map(g => `<option value="${g}" ${g === S.goal ? 'selected' : ''}>${g === 4 ? 'Low-energy day: 4' : g === 8 ? 'Normal day: 8' : g === 12 ? 'Strong day: 12' : 'Beast mode: 20'}</option>`).join('')}</select></div></div>
   <div class="tracks">${TRACKS.map(trackCard).join('')}</div>
+  ${skillProfile()}
   <div class="card"><h2>🎮 Brain-break games</h2><p class="muted">A new one unlocks every 2 lessons. Each takes about 2 minutes, a fun reward that won't swallow your evening.</p><div class="games">${GAMES.map(g => { const un = gameUnlocked(g); return `<a class="game ${un ? '' : 'lk'} ${S.games[g.id] ? 'won' : ''}" href="${un ? '#g-' + g.id : '#home'}"><span class="gi">${S.games[g.id] ? '🏆' : un ? '🎁' : '🔒'}</span><b>${esc(g.title)}</b><span class="small muted">${un ? (g.track === 'excel' ? 'Excel' : 'Power BI') + ' reward' : `after ${g.track === 'excel' ? 'Excel' : 'Power BI'} lesson ${g.after}`}</span></a>`; }).join('')}</div></div>
   <div class="two"><div class="card"><h2>📦 Practice files</h2><p class="muted">For real hands-on practice in Excel and Power BI Desktop.</p><div class="col"><a class="btn ghost" href="practice/Lumi_Excel_Practice.xlsx" target="_blank" rel="noopener">📗 Excel practice workbook</a><a class="btn ghost" href="practice/LumiBoba_PowerBI_Data.xlsx" target="_blank" rel="noopener">📊 Power BI dataset (4 tables)</a><a class="btn ghost" href="practice/Messy_Customers.csv" target="_blank" rel="noopener">🧹 Messy_Customers.csv</a><div class="small muted">Plus Budget_Wide.csv, Orders_Q1.csv and Orders_Q2.csv for Power Query Pro (in the <code>practice</code> folder).</div></div></div>
   <div class="card"><h2>🧠 Built for focus</h2><ul class="feat"><li><b>One thing per screen.</b> No walls of text.</li><li><b>⏱️ Focus timer</b> (${S.set.mins} min) with guided breaks.</li><li><b>📝 Parking lot</b> for stray thoughts.</li><li><b>🔊 Read aloud</b> and calm mode in ⚙️.</li><li><b>Resume exactly</b> where you stopped.</li></ul><button class="btn ghost small" id="setBtn2">⚙️ Adjust settings</button></div></div>
   </section>`;
+}
+function skillProfile(){
+  S.skill = S.skill || {}; const taken = Object.keys(S.skill); const totalP = Object.values(PRACTICE_SETS).reduce((a, l) => a + l.length, 0), doneP = Object.keys(S.passed).filter(k => /_p:/.test(k)).length;
+  const agg = {}; taken.forEach(id => Object.entries(S.skill[id].by).forEach(([k, v]) => { agg[k] = agg[k] || {got:0, of:0, id}; agg[k].got += v.got; agg[k].of += v.of; }));
+  const weak = Object.entries(agg).filter(([, v]) => v.got / v.of < .75).sort((a, b) => a[1].got / a[1].of - b[1].got / b[1].of).slice(0, 5);
+  return `<div class="card"><h2>📊 Your skill profile</h2><p class="muted" style="margin-top:0">From your Skills Checks · 🏋️ ${doneP}/${totalP} practice challenges done</p>
+    ${taken.length ? TRACKS.map(t => `<b>${t.name}</b><div class="prof">${t.lessons.map((l, i) => { const r = S.skill[l.id]; return `<a class="profc" href="#l-${l.id}_c" title="${esc(l.title)}"><span>${i + 1}</span><span class="bar"><i style="width:${r ? r.pct : 0}%;background:${!r ? '#eee' : r.pct >= 70 ? '#5fd3a8' : r.pct >= 50 ? '#f8d77a' : '#f29b9b'}"></i></span><b>${r ? r.pct + '%' : '–'}</b></a>`; }).join('')}</div>`).join('')
+      + (weak.length ? `<h3 style="margin:14px 0 6px">🎯 Focus areas</h3><div class="row">${weak.map(([k, v]) => `<a class="pill" href="#l-${v.id}_p" style="text-decoration:none">${esc(XSKILLS[k] || k)} · ${Math.round(100 * v.got / v.of)}%</a>`).join('')}</div>` : '<p>🎉 No weak spots in the checks you\'ve taken!</p>')
+      : '<p>After each lesson, take its <b>🎓 Skills Check</b>. Your strengths and focus areas will appear here.</p>'}</div>`;
 }
 function wireHome(){ const g = $('#goalSel'); if(g) g.onchange = () => { S.goal = +g.value; save(); route(); }; const s = $('#setBtn2'); if(s) s.onclick = settings;
   $$('.lessons a[aria-disabled]').forEach(a => a.onclick = e => { e.preventDefault(); toast('🔒 Finish the lesson before this one first. One step at a time!'); });
@@ -575,6 +647,6 @@ document.addEventListener('keydown', e => {
   if(e.key === 'Enter' && !$('#primary').disabled && document.activeElement && !document.activeElement.closest('.step')){ e.preventDefault(); $('#primary').click(); }
   else if(player.ctrl && player.ctrl.keys && /^[a-dA-D]$/.test(e.key)) player.ctrl.keys(e.key);
 });
-window.__lab = { breakTime: () => breakTime(), S, TRACKS, get player(){ return player; }, solveCurrent: () => player.ctrl.solve && player.ctrl.solve(), M };
+window.__lab = { buildM, findLesson, allLessons, save: () => save(), breakTime: () => breakTime(), S, TRACKS, get player(){ return player; }, solveCurrent: () => player.ctrl.solve && player.ctrl.solve(), M };
 document.addEventListener('DOMContentLoaded', () => { $('#setBtn').onclick = settings; $('#parkTop').onclick = parking; route(); if(!S.name) setTimeout(welcome, 400); });
 })();

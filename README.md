@@ -2,7 +2,7 @@
 
 A hands-on, ADHD-friendly course that teaches **Excel** (13 lessons) and **Power BI** (13 lessons) from beginner to job-ready, covering what business analytics, BI and data analyst roles expect. Learners practise in a working spreadsheet and a Power BI simulator right in the browser, then repeat each skill in real Excel and Power BI Desktop with the included practice files.
 
-**Live site:** https://chaitalipatil06.github.io/Excel-PowerBI-Lab/
+**Live site:** https://chaitalipatil06.github.io/REPO-NAME/ (replace REPO-NAME with your repository's name)
 
 ## What's inside
 
@@ -10,6 +10,12 @@ A hands-on, ADHD-friendly course that teaches **Excel** (13 lessons) and **Power
 | --- | --- | --- |
 | Excel | Grid basics · Formulas & fill down · SUM/AVERAGE/MIN/MAX · IF/AND/IFERROR · VLOOKUP/XLOOKUP/INDEX-MATCH · SUMIFS & text cleaning · Sort/filter/conditional formatting · PivotTables & charts · Dates & TEXT formats · Dynamic arrays (FILTER/SORT/UNIQUE, SUMPRODUCT) · Named ranges, LET, Goal Seek & what-if · Dashboards & Power Query in Excel · a job-style Skills Test | A real formula engine (70+ functions including dates, dynamic arrays that spill, LET and named ranges, `$` references, Fill Down / Ctrl+D, Goal Seek), sortable/filterable table, PivotTable builder, chart builder |
 | Power BI | Workflow & interface · Power Query · Star-schema modeling · DAX measures · CALCULATE & filter context · Visuals & slicers · Dashboard design & publishing · Power Query Pro (unpivot/append/merge/group) · Time intelligence (YTD, LY, YoY, MoM) · Advanced DAX (row vs filter context, calculated columns, VAR, FILTER) · Drill-down, bookmarks & storytelling · Service, gateways, RLS & deployment · Capstone business review | Power Query simulator (clean, unpivot, append, merge, group by), Model view (draw relationships), DAX editor with filter context, VAR, FILTER and time intelligence, calculated columns, row-level security, report builder with Region and Year slicers |
+
+### Story → practice → skills check (every lesson)
+
+- **📖 A story first.** Each lesson opens at the fictional Lumi Health clinic: a nurse manager, pharmacist, billing lead or CFO brings a real question. The story explains the concept with a healthcare analogy (an IF is a clinical decision rule; a relationship is the patient ID wristband; row-level security is badge access to wards) and lists when you'd use it at work
+- **🏋️ 10 practice challenges per lesson** (260 in total), each with a one-line story, mostly on clinic data, auto-checked by the same engines
+- **🎓 A 5-task Skills Check per lesson** (130 in total): formulas, pivots, Power Query, relationships, DAX, visuals and concept questions. Scoring: first try = 1, after a mistake = ½, "Show me" or "I don't know yet" = 0. It ends with a **skill report** (score, level, per-skill bars, strengths, and "work on next" links to the matching practice challenges), and the home page keeps a **skill profile** with focus areas
 
 Every lesson ends with a **"Try it for real"** checklist using the files in `practice/`:
 
@@ -37,12 +43,13 @@ Plain HTML, CSS and JavaScript in one self-contained `index.html`, with no frame
 - `src/engine-excel.js`: a small spreadsheet engine (tokenizer, parser, evaluator, relative/absolute reference shifting)
 - `src/engine-pbi.js`: a mini Power BI engine (relationships with one-to-many filter propagation, a DAX subset including CALCULATE, ALL, FILTER, SUMX, RELATED, DIVIDE, VAR/RETURN, TOTALYTD, SAMEPERIODLASTYEAR and DATEADD, calculated columns, row-level security, and Power Query step replay)
 - `src/content.js` and `src/content-adv.js`: all lessons, quizzes, tasks and their answer checks
+- `src/practice-excel.js` and `src/practice-pbi.js`: lesson stories, practice sets and skills checks (on the Lumi Health clinic data)
 - `src/app.js`: the lesson player, simulators, focus tools, games and progress (saved in `localStorage`)
 - Python (build-time only): `gen_data.py` makes the dataset, `gen_practice.py` builds the practice files with openpyxl, `build.py` bundles `src/` into `index.html`, and `tests/e2e.py` (Playwright) completes every step of every lesson automatically
 
 ```bash
 cd src && python3 gen_data.py && python3 gen_practice.py && python3 build.py
-python3 tests/e2e.py
+python3 tests/e2e.py && python3 tests/test_practice.py
 ```
 
 ## Deploy
